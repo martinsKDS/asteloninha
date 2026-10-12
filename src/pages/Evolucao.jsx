@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useEvolucaoStore } from '../store/useEvolucaoStore.js'
+import { useEvolucaoStore } from '../store/useEvolucaoStore.jsx'
 import WeightChart from '../components/WeightChart.jsx'
 import StatCard from '../components/StatCard.jsx'
 import RegistrarPesoModal from '../components/RegistrarPesoModal.jsx'

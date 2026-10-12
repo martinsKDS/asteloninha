@@ -23,11 +23,11 @@ const baseCalorias = [
   { data: '2026-10-08', valor: 1750 }, { data: '2026-10-10', valor: 1780 },
 ]
 const baseScore = [
-  { dia: '15 set', valor: 66 }, { dia: '18 set', valor: 67 },
-  { dia: '21 set', valor: 68 }, { dia: '24 set', valor: 69 },
-  { dia: '27 set', valor: 68 }, { dia: '30 set', valor: 70 },
-  { dia: '03 out', valor: 69 }, { dia: '06 out', valor: 70 },
-  { dia: '08 out', valor: 72 }, { dia: '10 out', valor: 74 },
+  { data: '2026-09-15', valor: 66 }, { data: '2026-09-18', valor: 67 },
+  { data: '2026-09-21', valor: 68 }, { data: '2026-09-24', valor: 69 },
+  { data: '2026-09-27', valor: 68 }, { data: '2026-09-30', valor: 70 },
+  { data: '2026-10-03', valor: 69 }, { data: '2026-10-06', valor: 70 },
+  { data: '2026-10-08', valor: 72 }, { data: '2026-10-10', valor: 74 },
 ]
 const fmt = (n) => Number(n).toLocaleString('pt-BR', { maximumFractionDigits: 1 })
 const diaMes = (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`
@@ -41,16 +41,34 @@ function lerRegistros(chave) {
 const nomeDia = (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`
 const hojeISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` }
 
-function Grafico({ dados, unidade, tipo }) {
+function Grafico({ dados, unidade, tipo, periodo }) {
   const valores = dados.map(d => d.valor)
+  const temDados = dados.length > 0
+  const meta = tipo === 'peso' ? 55 : tipo === 'calorias' ? 1800 : 85
   const margem = tipo === 'peso' ? 1.5 : tipo === 'calorias' ? 100 : 5
-  const min = Math.floor((Math.min(...valores) - margem) / (tipo === 'peso' ? 1 : 10)) * (tipo === 'peso' ? 1 : 10)
-  const max = Math.ceil((Math.max(...valores) + margem) / (tipo === 'peso' ? 1 : 10)) * (tipo === 'peso' ? 1 : 10)
-  const x = i => 30 + i * 940 / Math.max(1, dados.length - 1)
+  const passo = tipo === 'peso' ? 1 : 10
+  const baseMin = temDados ? Math.min(...valores) : meta - margem
+  const baseMax = temDados ? Math.max(...valores) : meta + margem
+  const min = Math.floor((Math.min(baseMin - margem, meta - margem * 0.25)) / passo) * passo
+  const max = Math.ceil((Math.max(baseMax + margem, meta + margem * 0.25)) / passo) * passo
+  const hoje = new Date(`${hojeISO()}T12:00:00`)
+  const inicio = new Date(hoje)
+  inicio.setDate(inicio.getDate() - (Number(periodo) - 1))
+  const timestamp = iso => new Date(`${iso}T12:00:00`).getTime()
+  const inicioTs = inicio.getTime()
+  const fimTs = hoje.getTime()
+  const x = d => 30 + ((timestamp(d.data) - inicioTs) / Math.max(1, fimTs - inicioTs)) * 940
   const y = v => 150 - ((v - min) / Math.max(1, max - min)) * 112
-  const points = dados.map((d, i) => `${x(i)},${y(d.valor)}`).join(' ')
-  const area = `30,150 ${points} 970,150`
+  const points = dados.map(d => `${x(d)},${y(d.valor)}`).join(' ')
+  const area = temDados ? `30,150 ${points} 970,150` : ''
+  const metaY = y(meta)
+  const metaLabel = tipo === 'peso' ? 'Meta: 55 kg' : tipo === 'calorias' ? 'Meta: 1.800 kcal' : 'Meta: 85 pts'
   const label = tipo === 'peso' ? 'peso' : tipo === 'calorias' ? 'consumo de calorias' : 'Health Score'
+  const ticks = Array.from({ length: 5 }, (_, i) => {
+    const d = new Date(inicio)
+    d.setDate(inicio.getDate() + Math.round((Number(periodo) - 1) * i / 4))
+    return { data: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`, x: 30 + i * 940 / 4 }
+  })
 
   return <div className="ev-chart">
     <div className="ev-y-labels">
@@ -66,18 +84,17 @@ function Grafico({ dados, unidade, tipo }) {
         </linearGradient>
       </defs>
       {[38, 75, 112, 150].map(yy => <line key={yy} x1="30" y1={yy} x2="970" y2={yy} stroke="#e8efeb" strokeWidth="1" strokeDasharray="3 5" />)}
-      <polygon points={area} fill={`url(#ev-fill-${tipo})`} />
-      <polyline points={points} fill="none" stroke="#167a63" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-      {dados.map((d, i) => <g key={`${d.dia}-${i}`}>
-        <circle cx={x(i)} cy={y(d.valor)} r="2.8" fill="#167a63" stroke="#ffffff" strokeWidth="1.2" />
-      </g>)}
-      {dados.map((d, i) => {
-        // Mantém no máximo seis datas visíveis, distribuídas pelo eixo.
-        const passo = Math.max(1, Math.ceil((dados.length - 1) / 5))
-        const mostrar = i === 0 || i === dados.length - 1 || i % passo === 0
-        return mostrar ? <text key={`${d.dia}-label`} x={x(i)} y="174" fill="#71827b" fontSize="8.5" fontWeight="400" textAnchor="middle">{d.dia}</text> : null
-      })}
+      <line x1="30" y1={metaY} x2="970" y2={metaY} stroke="#d49a37" strokeWidth="1.8" strokeDasharray="7 5" />
+      <rect x="812" y={Math.max(4, metaY - 16)} width="158" height="14" rx="4" fill="#fff8e9" />
+      <text x="964" y={Math.max(14, metaY - 6)} fill="#9a6a16" fontSize="10" fontWeight="400" textAnchor="end">{metaLabel}</text>
+      {temDados && <>
+        <polygon points={area} fill={`url(#ev-fill-${tipo})`} />
+        <polyline points={points} fill="none" stroke="#167a63" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+        {dados.map((d, i) => <circle key={`${d.data}-${i}`} cx={x(d)} cy={y(d.valor)} r="2.5" fill="#167a63" stroke="#ffffff" strokeWidth="1.2" />)}
+      </>}
+      {ticks.map((t, i) => <text key={t.data} x={t.x} y="174" fill="#71827b" fontSize="10" fontWeight="400" textAnchor={i === 0 ? 'start' : i === 4 ? 'end' : 'middle'}>{diaMes(t.data)}</text>)}
     </svg>
+    {!temDados && <p className="ev-chart-empty">Nenhuma medição neste período. Registre seus dados para acompanhar sua evolução.</p>}
   </div>
 }
 
@@ -94,25 +111,32 @@ export default function EvolucaoIntegrada({ profileName = 'Mariana' }) {
   const [alimentos, setAlimentos] = useState('')
 
   const dados = useMemo(() => {
-    const limite = periodo === '7' ? 4 : periodo === '30' ? 8 : 10
+    const hoje = new Date(`${hojeISO()}T12:00:00`)
+    const inicio = new Date(hoje)
+    inicio.setDate(inicio.getDate() - (Number(periodo) - 1))
+    const dentroPeriodo = r => {
+      if (!r.data) return false
+      const d = new Date(`${r.data}T12:00:00`)
+      return !Number.isNaN(d.getTime()) && d >= inicio && d <= hoje
+    }
     if (tipo === 'calorias') {
       const porDia = new Map()
-      registrosCalorias.forEach(r => porDia.set(r.data, (porDia.get(r.data) || 0) + Number(r.calorias)))
-      const demos = baseCalorias.map(r => ({ ...r }))
+      registrosCalorias.forEach(r => {
+        if (dentroPeriodo(r)) porDia.set(r.data, (porDia.get(r.data) || 0) + Number(r.calorias))
+      })
+      const demos = baseCalorias.filter(dentroPeriodo).map(r => ({ ...r }))
       const combinados = new Map(demos.map(r => [r.data, { ...r }]))
       porDia.forEach((total, dia) => combinados.set(dia, { data: dia, valor: total }))
-      const hoje = new Date(`${hojeISO()}T12:00:00`)
-      const dias = [...combinados.values()].filter(r => {
-        const d = new Date(`${r.data}T12:00:00`)
-        return d <= hoje && (hoje - d) / 86400000 < Number(periodo)
-      }).sort((a,b) => a.data.localeCompare(b.data))
-      return dias.slice(-limite).map(r => ({ dia: nomeDia(r.data), valor: r.valor, data: r.data }))
+      return [...combinados.values()].sort((a,b) => a.data.localeCompare(b.data)).map(r => ({ dia: diaMes(r.data), data: r.data, valor: r.valor }))
     }
-    if (tipo === 'health-score') return baseScore.slice(-limite).map(d => ({ ...d }))
-    const todos = [...basePesos.map(r => ({ ...r, dia: diaMes(r.data) })),
-      ...registros.map(r => ({ ...r, dia: diaMes(r.data) }))]
-    const unicos = [...new Map(todos.map(d => [d.data, d])).values()].sort((a, b) => a.data.localeCompare(b.data))
-    return unicos.slice(-limite).map(d => ({ dia: d.dia, valor: d.valor }))
+    if (tipo === 'health-score') {
+      return baseScore.filter(dentroPeriodo).map(r => ({ ...r, dia: diaMes(r.data) }))
+    }
+    const todos = [...basePesos, ...registros]
+      .filter(dentroPeriodo)
+      .map(r => ({ ...r, dia: diaMes(r.data) }))
+    return [...new Map(todos.map(d => [d.data, d])).values()]
+      .sort((a, b) => a.data.localeCompare(b.data))
   }, [tipo, periodo, registros, registrosCalorias])
 
   const mediaCalorias = dados.length ? Math.round(dados.reduce((s, d) => s + d.valor, 0) / dados.length) : 0
@@ -182,7 +206,7 @@ export default function EvolucaoIntegrada({ profileName = 'Mariana' }) {
         <div><h2>{tipo === 'peso' ? 'Seu peso (kg)' : tipo === 'calorias' ? 'Consumo de calorias (kcal)' : 'Health Score'}</h2><p>{tipo === 'peso' ? 'Acompanhe as mudanças no seu peso' : tipo === 'calorias' ? 'Veja como está seu consumo diário' : 'Acompanhe sua pontuação de saúde'}</p></div>
         {(tipo === 'peso' || tipo === 'calorias') && <button className="ev-register" onClick={() => { setValor(''); setErro(''); setData(hojeISO()); setModal(true) }}>{tipo === 'peso' ? '＋ Registrar peso' : '＋ Registrar consumo'}</button>}
       </div>
-      <Grafico dados={dados} unidade={unidade} tipo={tipo} />
+      <Grafico dados={dados} unidade={unidade} tipo={tipo} periodo={periodo} />
     </section>
     <div className="ev-stats">{resumo.map(item => <article className="ev-stat" key={item.label}>
       <div><span>{item.label}</span><strong>{item.value}</strong><small>{item.sub}</small></div><b aria-hidden="true">{item.icon}</b>
