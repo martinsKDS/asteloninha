@@ -98,7 +98,7 @@ function Grafico({ dados, unidade, tipo, periodo }) {
   </div>
 }
 
-export default function EvolucaoIntegrada({ profileName = 'Mariana' }) {
+export default function EvolucaoIntegrada({ profileName = 'Mariana', searchTerm = '' }) {
   const [tipo, setTipo] = useState('peso')
   const [periodo, setPeriodo] = useState('30')
   const [registros, setRegistros] = useState(() => lerRegistros(STORAGE_KEY))
@@ -138,6 +138,19 @@ export default function EvolucaoIntegrada({ profileName = 'Mariana' }) {
     return [...new Map(todos.map(d => [d.data, d])).values()]
       .sort((a, b) => a.data.localeCompare(b.data))
   }, [tipo, periodo, registros, registrosCalorias])
+
+  const resultadosBusca = useMemo(() => {
+    const q = searchTerm.trim().toLocaleLowerCase('pt-BR')
+    if (!q) return []
+    const formatData = iso => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`
+    const entradas = [
+      ...[...basePesos, ...registros].map(r => ({ tipo: 'peso', rotulo: 'Peso', data: r.data, valor: r.valor, detalhe: `${fmt(r.valor)} kg`, texto: `peso ${formatData(r.data)} ${r.valor} kg meta 55 kg` })),
+      ...[...baseCalorias, ...registrosCalorias].map(r => ({ tipo: 'calorias', rotulo: 'Calorias', data: r.data, valor: r.valor ?? r.calorias, detalhe: r.refeicao ? `${r.refeicao} · ${r.calorias} kcal${r.alimentos ? ` · ${r.alimentos}` : ''}` : `${fmt(r.valor)} kcal`, texto: `calorias consumo ${formatData(r.data)} ${r.valor ?? r.calorias} kcal ${r.refeicao || ''} ${r.alimentos || ''} meta 1800 kcal` })),
+      ...baseScore.map(r => ({ tipo: 'health-score', rotulo: 'Health Score', data: r.data, valor: r.valor, detalhe: `${r.valor} pontos`, texto: `health score pontuação ${formatData(r.data)} ${r.valor} pontos meta 85` })),
+    ]
+    const unicos = [...new Map(entradas.map(r => [`${r.tipo}-${r.data}-${r.detalhe}`, r])).values()]
+    return unicos.filter(r => r.texto.toLocaleLowerCase('pt-BR').includes(q)).sort((a,b) => b.data.localeCompare(a.data)).slice(0, 8)
+  }, [searchTerm, registros, registrosCalorias])
 
   const mediaCalorias = dados.length ? Math.round(dados.reduce((s, d) => s + d.valor, 0) / dados.length) : 0
   const atual = tipo === 'peso'
@@ -201,6 +214,10 @@ export default function EvolucaoIntegrada({ profileName = 'Mariana' }) {
       </div>
       <label className="ev-period"><span className="ev-period__icon" aria-hidden="true">▦</span><span className="ev-period__label">Período</span><select value={periodo} onChange={e => setPeriodo(e.target.value)} aria-label="Período"><option value="7">7 dias</option><option value="30">30 dias</option><option value="90">90 dias</option></select><span className="ev-period__chevron" aria-hidden="true">⌄</span></label>
     </div>
+    {searchTerm.trim() && <section className="ev-search-results" aria-live="polite">
+      <div className="ev-search-results__heading"><strong>Resultados da busca</strong><span>{resultadosBusca.length} {resultadosBusca.length === 1 ? 'resultado' : 'resultados'}</span></div>
+      {resultadosBusca.length ? <div className="ev-search-results__list">{resultadosBusca.map((item, index) => <button type="button" className="ev-search-result" key={`${item.tipo}-${item.data}-${index}`} onClick={() => setTipo(item.tipo)}><span className="ev-search-result__icon">{item.tipo === 'peso' ? '↗' : item.tipo === 'calorias' ? '◉' : '✦'}</span><span className="ev-search-result__main"><strong>{item.rotulo}</strong><small>{diaMes(item.data)} · {item.detalhe}</small></span><span className="ev-search-result__arrow">Ver →</span></button>)}</div> : <p className="ev-search-results__empty">Nenhum registro encontrado para “{searchTerm.trim()}”. Tente buscar por peso, calorias, Health Score, uma data ou um valor.</p>}
+    </section>}
     <section className="ev-chart-card">
       <div className="ev-card-heading">
         <div><h2>{tipo === 'peso' ? 'Seu peso (kg)' : tipo === 'calorias' ? 'Consumo de calorias (kcal)' : 'Health Score'}</h2><p>{tipo === 'peso' ? 'Acompanhe as mudanças no seu peso' : tipo === 'calorias' ? 'Veja como está seu consumo diário' : 'Acompanhe sua pontuação de saúde'}</p></div>
