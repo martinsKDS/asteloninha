@@ -1,0 +1,211 @@
+import { useMemo, useState } from 'react'
+
+const STORAGE_KEY = 'smartcarbo-evolucao-pesos-v1'
+const CALORIAS_STORAGE_KEY = 'smartcarbo-evolucao-calorias-v1'
+
+const basePesos = [
+  { data: '2026-09-15', valor: 57.4 },
+  { data: '2026-09-18', valor: 57.4 },
+  { data: '2026-09-21', valor: 57.5 },
+  { data: '2026-09-24', valor: 57.4 },
+  { data: '2026-09-27', valor: 57.5 },
+  { data: '2026-09-30', valor: 57.4 },
+  { data: '2026-10-03', valor: 57.5 },
+  { data: '2026-10-06', valor: 57.3 },
+  { data: '2026-10-08', valor: 65.0 },
+  { data: '2026-10-10', valor: 61.0 },
+]
+const baseCalorias = [
+  { data: '2026-09-15', valor: 1660 }, { data: '2026-09-18', valor: 1680 },
+  { data: '2026-09-21', valor: 1690 }, { data: '2026-09-24', valor: 1710 },
+  { data: '2026-09-27', valor: 1700 }, { data: '2026-09-30', valor: 1730 },
+  { data: '2026-10-03', valor: 1720 }, { data: '2026-10-06', valor: 1740 },
+  { data: '2026-10-08', valor: 1750 }, { data: '2026-10-10', valor: 1780 },
+]
+const baseScore = [
+  { dia: '15 set', valor: 66 }, { dia: '18 set', valor: 67 },
+  { dia: '21 set', valor: 68 }, { dia: '24 set', valor: 69 },
+  { dia: '27 set', valor: 68 }, { dia: '30 set', valor: 70 },
+  { dia: '03 out', valor: 69 }, { dia: '06 out', valor: 70 },
+  { dia: '08 out', valor: 72 }, { dia: '10 out', valor: 74 },
+]
+const fmt = (n) => Number(n).toLocaleString('pt-BR', { maximumFractionDigits: 1 })
+const diaMes = (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`
+
+function lerRegistros(chave) {
+  try {
+    const v = JSON.parse(localStorage.getItem(chave) || '[]')
+    return Array.isArray(v) ? v : []
+  } catch { return [] }
+}
+const nomeDia = (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`
+const hojeISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` }
+
+function Grafico({ dados, unidade, tipo }) {
+  const valores = dados.map(d => d.valor)
+  const margem = tipo === 'peso' ? 1.5 : tipo === 'calorias' ? 100 : 5
+  const min = Math.floor((Math.min(...valores) - margem) / (tipo === 'peso' ? 1 : 10)) * (tipo === 'peso' ? 1 : 10)
+  const max = Math.ceil((Math.max(...valores) + margem) / (tipo === 'peso' ? 1 : 10)) * (tipo === 'peso' ? 1 : 10)
+  const x = i => 30 + i * 940 / Math.max(1, dados.length - 1)
+  const y = v => 150 - ((v - min) / Math.max(1, max - min)) * 112
+  const points = dados.map((d, i) => `${x(i)},${y(d.valor)}`).join(' ')
+  const area = `30,150 ${points} 970,150`
+  const label = tipo === 'peso' ? 'peso' : tipo === 'calorias' ? 'consumo de calorias' : 'Health Score'
+
+  return <div className="ev-chart">
+    <div className="ev-y-labels">
+      <span>{fmt(max)}{unidade}</span>
+      <span>{fmt((max + min) / 2)}{unidade}</span>
+      <span>{fmt(min)}{unidade}</span>
+    </div>
+    <svg viewBox="0 0 1000 184" role="img" aria-label={`Gráfico de evolução de ${label}`} preserveAspectRatio="none">
+      <defs>
+        <linearGradient id={`ev-fill-${tipo}`} x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stopColor="#16866d" stopOpacity=".22" />
+          <stop offset="100%" stopColor="#16866d" stopOpacity=".015" />
+        </linearGradient>
+      </defs>
+      {[38, 75, 112, 150].map(yy => <line key={yy} x1="30" y1={yy} x2="970" y2={yy} stroke="#e8efeb" strokeWidth="1" strokeDasharray="3 5" />)}
+      <polygon points={area} fill={`url(#ev-fill-${tipo})`} />
+      <polyline points={points} fill="none" stroke="#167a63" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+      {dados.map((d, i) => <g key={`${d.dia}-${i}`}>
+        <circle cx={x(i)} cy={y(d.valor)} r="2.8" fill="#167a63" stroke="#ffffff" strokeWidth="1.2" />
+      </g>)}
+      {dados.map((d, i) => {
+        // Mantém no máximo seis datas visíveis, distribuídas pelo eixo.
+        const passo = Math.max(1, Math.ceil((dados.length - 1) / 5))
+        const mostrar = i === 0 || i === dados.length - 1 || i % passo === 0
+        return mostrar ? <text key={`${d.dia}-label`} x={x(i)} y="174" fill="#71827b" fontSize="8.5" fontWeight="400" textAnchor="middle">{d.dia}</text> : null
+      })}
+    </svg>
+  </div>
+}
+
+export default function EvolucaoIntegrada({ profileName = 'Mariana' }) {
+  const [tipo, setTipo] = useState('peso')
+  const [periodo, setPeriodo] = useState('30')
+  const [registros, setRegistros] = useState(() => lerRegistros(STORAGE_KEY))
+  const [registrosCalorias, setRegistrosCalorias] = useState(() => lerRegistros(CALORIAS_STORAGE_KEY))
+  const [modal, setModal] = useState(false)
+  const [valor, setValor] = useState('')
+  const [data, setData] = useState(hojeISO)
+  const [erro, setErro] = useState('')
+  const [refeicao, setRefeicao] = useState('Almoço')
+  const [alimentos, setAlimentos] = useState('')
+
+  const dados = useMemo(() => {
+    const limite = periodo === '7' ? 4 : periodo === '30' ? 8 : 10
+    if (tipo === 'calorias') {
+      const porDia = new Map()
+      registrosCalorias.forEach(r => porDia.set(r.data, (porDia.get(r.data) || 0) + Number(r.calorias)))
+      const demos = baseCalorias.map(r => ({ ...r }))
+      const combinados = new Map(demos.map(r => [r.data, { ...r }]))
+      porDia.forEach((total, dia) => combinados.set(dia, { data: dia, valor: total }))
+      const hoje = new Date(`${hojeISO()}T12:00:00`)
+      const dias = [...combinados.values()].filter(r => {
+        const d = new Date(`${r.data}T12:00:00`)
+        return d <= hoje && (hoje - d) / 86400000 < Number(periodo)
+      }).sort((a,b) => a.data.localeCompare(b.data))
+      return dias.slice(-limite).map(r => ({ dia: nomeDia(r.data), valor: r.valor, data: r.data }))
+    }
+    if (tipo === 'health-score') return baseScore.slice(-limite).map(d => ({ ...d }))
+    const todos = [...basePesos.map(r => ({ ...r, dia: diaMes(r.data) })),
+      ...registros.map(r => ({ ...r, dia: diaMes(r.data) }))]
+    const unicos = [...new Map(todos.map(d => [d.data, d])).values()].sort((a, b) => a.data.localeCompare(b.data))
+    return unicos.slice(-limite).map(d => ({ dia: d.dia, valor: d.valor }))
+  }, [tipo, periodo, registros, registrosCalorias])
+
+  const mediaCalorias = dados.length ? Math.round(dados.reduce((s, d) => s + d.valor, 0) / dados.length) : 0
+  const atual = tipo === 'peso'
+    ? (registros.length ? registros[registros.length - 1].valor : 61)
+    : tipo === 'calorias' ? (dados.length ? dados[dados.length - 1].valor : 0) : 74
+  const unidade = tipo === 'peso' ? ' kg' : tipo === 'calorias' ? '' : ' pts'
+  const resumo = tipo === 'peso' ? [
+    { label: 'Peso atual', value: `${fmt(atual)} kg`, sub: 'última medição', icon: '↘' },
+    { label: 'Variação', value: registros.length ? `${fmt(atual - 57.4)} kg` : '−1,1 kg', sub: `nos últimos ${periodo} dias`, icon: '⌁' },
+    { label: 'Meta de peso', value: '55 kg', sub: atual <= 55 ? 'meta atingida' : `faltam ${fmt(atual - 55)} kg`, icon: '⚑' },
+  ] : tipo === 'calorias' ? [
+    { label: 'Média diária', value: `${fmt(mediaCalorias)} kcal`, sub: 'consumo médio diário', icon: '◉' },
+    { label: 'Variação', value: dados.length > 1 ? `${fmt(dados[dados.length - 1].valor - dados[0].valor)} kcal` : '— kcal', sub: `nos últimos ${periodo} dias`, icon: '⌁' },
+    { label: 'Meta diária', value: '1.800 kcal', sub: 'meta de referência', icon: '⚑' },
+  ] : [
+    { label: 'Health Score atual', value: '74 pts', sub: 'pontuação atual', icon: '✦' },
+    { label: 'Variação', value: '+8 pts', sub: `nos últimos ${periodo} dias`, icon: '⌁' },
+    { label: 'Objetivo', value: '85 pts', sub: 'continue evoluindo', icon: '⚑' },
+  ]
+
+  function salvar(e) {
+    e.preventDefault()
+    const n = Number(String(valor).replace(',', '.'))
+    if (!valor || !Number.isFinite(n) || n < 20 || n > 400) {
+      setErro('Informe um peso válido entre 20 e 400 kg.')
+      return
+    }
+    if (!data) { setErro('Selecione a data da medição.'); return }
+    const novo = [...registros.filter(r => r.data !== data), { data, valor: n }].sort((a, b) => a.data.localeCompare(b.data))
+    setRegistros(novo)
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(novo)) } catch {}
+    setValor('')
+    setErro('')
+    setModal(false)
+  }
+
+  function salvarCalorias(e) {
+    e.preventDefault()
+    const n = Number(String(valor).replace(',', '.'))
+    if (!valor || !Number.isFinite(n) || n <= 0 || n > 10000) { setErro('Informe uma quantidade de calorias entre 1 e 10.000 kcal.'); return }
+    if (!data) { setErro('Selecione a data do consumo.'); return }
+    const novoRegistro = { id: `${Date.now()}-${Math.random().toString(16).slice(2)}`, data, refeicao, alimentos: alimentos.trim(), calorias: n }
+    const novos = [...registrosCalorias, novoRegistro].sort((a,b) => a.data.localeCompare(b.data))
+    setRegistrosCalorias(novos)
+    try { localStorage.setItem(CALORIAS_STORAGE_KEY, JSON.stringify(novos)) } catch {}
+    setValor(''); setAlimentos(''); setErro(''); setData(hojeISO()); setModal(false)
+  }
+
+  return <section className="evolution-page">
+    <div className="ev-heading">
+      <div>
+        <h1>Evolução</h1>
+        <p>Acompanhe seu progresso e veja sua evolução ao longo do tempo.</p>
+      </div>
+    </div>
+    <div className="ev-toolbar">
+      <div className="ev-tabs" role="tablist" aria-label="Tipo de evolução">
+        {[['peso', 'Peso'], ['calorias', 'Calorias'], ['health-score', 'Health Score']].map(([id, label]) =>
+          <button key={id} className={tipo === id ? 'active' : ''} role="tab" aria-selected={tipo === id} onClick={() => setTipo(id)}>{label}</button>
+        )}
+      </div>
+      <label className="ev-period"><span className="ev-period__icon" aria-hidden="true">▦</span><span className="ev-period__label">Período</span><select value={periodo} onChange={e => setPeriodo(e.target.value)} aria-label="Período"><option value="7">7 dias</option><option value="30">30 dias</option><option value="90">90 dias</option></select><span className="ev-period__chevron" aria-hidden="true">⌄</span></label>
+    </div>
+    <section className="ev-chart-card">
+      <div className="ev-card-heading">
+        <div><h2>{tipo === 'peso' ? 'Seu peso (kg)' : tipo === 'calorias' ? 'Consumo de calorias (kcal)' : 'Health Score'}</h2><p>{tipo === 'peso' ? 'Acompanhe as mudanças no seu peso' : tipo === 'calorias' ? 'Veja como está seu consumo diário' : 'Acompanhe sua pontuação de saúde'}</p></div>
+        {(tipo === 'peso' || tipo === 'calorias') && <button className="ev-register" onClick={() => { setValor(''); setErro(''); setData(hojeISO()); setModal(true) }}>{tipo === 'peso' ? '＋ Registrar peso' : '＋ Registrar consumo'}</button>}
+      </div>
+      <Grafico dados={dados} unidade={unidade} tipo={tipo} />
+    </section>
+    <div className="ev-stats">{resumo.map(item => <article className="ev-stat" key={item.label}>
+      <div><span>{item.label}</span><strong>{item.value}</strong><small>{item.sub}</small></div><b aria-hidden="true">{item.icon}</b>
+    </article>)}</div>
+    <p className="ev-note">Olá, {profileName}. Os dados demonstrativos podem ser substituídos pelos seus registros.</p>
+    {modal && <div className="ev-modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setModal(false) }}>
+      {tipo === 'peso' ? <form className="ev-modal" onSubmit={salvar}>
+        <button type="button" className="ev-close" aria-label="Fechar" onClick={() => setModal(false)}>×</button>
+        <h2>Registrar peso</h2><p>Registre seu peso para acompanhar sua evolução.</p>
+        <label>Data da medição<input type="date" value={data} onChange={e => setData(e.target.value)} required /></label>
+        <label>Peso (kg)<input type="number" min="20" max="400" step=".1" placeholder="Ex.: 57,0" value={valor} onChange={e => setValor(e.target.value)} required /></label>
+        {erro && <small className="ev-error">{erro}</small>}
+        <div className="ev-modal-actions"><button type="button" onClick={() => setModal(false)}>Cancelar</button><button type="submit">Salvar peso</button></div>
+      </form> : <form className="ev-modal" onSubmit={salvarCalorias}>
+        <button type="button" className="ev-close" aria-label="Fechar" onClick={() => setModal(false)}>×</button>
+        <h2>Registrar consumo</h2><p>Adicione uma refeição para atualizar seu consumo diário.</p>
+        <label>Data do consumo<input type="date" value={data} onChange={e => setData(e.target.value)} max={hojeISO()} required /></label>
+        <label>Tipo de refeição<select value={refeicao} onChange={e => setRefeicao(e.target.value)}><option>Café da manhã</option><option>Almoço</option><option>Jantar</option><option>Lanche</option></select></label>
+        <label>Alimentos (opcional)<input type="text" value={alimentos} onChange={e => setAlimentos(e.target.value)} placeholder="Ex.: arroz, feijão e frango" maxLength={180} /></label>
+        <label>Calorias (kcal)<input type="number" min="1" max="10000" step="1" placeholder="Ex.: 650" value={valor} onChange={e => setValor(e.target.value)} required /></label>
+        {erro && <small className="ev-error">{erro}</small>}
+        <div className="ev-modal-actions"><button type="button" onClick={() => setModal(false)}>Cancelar</button><button type="submit">Salvar consumo</button></div>
+      </form>}
+    </div>}
+  </section>
+}
