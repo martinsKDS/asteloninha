@@ -50,6 +50,7 @@ function Register() {
   // =========================
 
   const [errors, setErrors] = useState({});
+  const [submitting, setSubmitting] = useState(false);
 
   // =========================
   // LIMPAR ERRO
@@ -72,7 +73,7 @@ function Register() {
     const newErrors = {};
 
     if (name.trim() === "") {
-      newErrors.name = "Campo obirgatório*";
+      newErrors.name = "Campo obrigatório*";
     } else if (name.trim().length < 3) {
       newErrors.name = "Digite um nome válido.";
     }
@@ -87,9 +88,9 @@ function Register() {
 
     if (password === "") {
       newErrors.password = "Campo obrigatório*";
-    } else if (password.length < 6) {
+    } else if (password.length < 8) {
       newErrors.password =
-        "A senha deve ter pelo menos 6 caracteres.";
+        "A senha deve ter pelo menos 8 caracteres.";
     }
 
     if (confirmPassword === "") {
@@ -234,11 +235,65 @@ function Register() {
         condicaoSaude: healthCondition || "Nenhuma",
         avaliacaoAlimentacao: foodRating === "ruim" ? 1 : foodRating === "regular" ? 2 : foodRating === "boa" ? 3 : 4,
       };
-      // Cadastro temporário apenas no navegador. Backend será conectado depois.
-      localStorage.setItem("smartcarbo-user", JSON.stringify(dadosUsuario));
-      localStorage.setItem("smartcarbo-session", JSON.stringify({ email: dadosUsuario.email, nome: dadosUsuario.nome }));
-      alert("Cadastro salvo neste navegador! A conexão com o backend será feita depois.");
-      navigate("/app", { replace: true });
+      setSubmitting(true);
+
+      try {
+        const baseUrl = (
+          import.meta.env.VITE_API_URL || "http://localhost:8080"
+        ).replace(/\/+$/, "");
+
+        const response = await fetch(`${baseUrl}/api/v1/usuarios`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(dadosUsuario),
+        });
+
+        if (response.status === 409) {
+          setErrors({
+            general: "Este e-mail já está cadastrado. Tente fazer login.",
+          });
+          return;
+        }
+
+        if (response.status === 400) {
+          let mensagem = "Confira os dados informados e tente novamente.";
+          try {
+            const respostaErro = await response.json();
+            mensagem = respostaErro.message || respostaErro.mensagem || mensagem;
+          } catch {
+            // Mantém a mensagem padrão caso a API não retorne JSON.
+          }
+          setErrors({ general: mensagem });
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error(
+            "Não foi possível concluir o cadastro. Tente novamente."
+          );
+        }
+
+        localStorage.removeItem("smartcarbo-user");
+        localStorage.removeItem("smartcarbo-session");
+        localStorage.removeItem("smartcarbo-token");
+        localStorage.setItem(
+          "smartcarbo-register-success",
+          "Cadastro realizado com sucesso! Faça login para continuar."
+        );
+
+        navigate("/login", { replace: true });
+      } catch (error) {
+        console.error("Erro ao cadastrar usuário:", error);
+        setErrors({
+          general:
+            error instanceof TypeError
+              ? "Não foi possível conectar ao servidor. Verifique se o backend está funcionando."
+              : error.message ||
+                "Ocorreu um erro ao realizar o cadastro. Tente novamente.",
+        });
+      } finally {
+        setSubmitting(false);
+      }
     }
   }
 
@@ -1449,12 +1504,17 @@ function Register() {
                 </div>
 
 
+                <ErrorMessage>
+                  {errors.general}
+                </ErrorMessage>
+
                 <div className="navigation-buttons">
 
                   <button
                     type="button"
                     className="secondary-button"
                     onClick={handleBack}
+                    disabled={submitting}
                   >
                     ← Voltar
                   </button>
@@ -1463,9 +1523,10 @@ function Register() {
                     type="button"
                     className="primary-button"
                     onClick={handleNext}
+                    disabled={submitting}
                   >
-                    Finalizar cadastro
-                    <span>✓</span>
+                    {submitting ? "Enviando cadastro..." : "Finalizar cadastro"}
+                    {!submitting && <span>✓</span>}
                   </button>
 
                 </div>

@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import './App.css';
-import EvolucaoIntegrada from './pages/EvolucaoIntegrada.jsx';
-import Ranking from './pages/Ranking.jsx';
-import Community from './pages/Community.jsx';
+import '../App.css';
+import EvolucaoIntegrada from './EvolucaoIntegrada.jsx';
+import Ranking from './Ranking.jsx';
+import Community from './Community.jsx';
 
 const TEMPLATE_KEY = 'smartcarbo-meal-templates-v1';
 const SELECTED_DATE_KEY = 'smartcarbo-selected-meal-date';
@@ -28,6 +28,74 @@ const suggestions = [{title:'Café da manhã equilibrado',category:'Café da man
 const localISODate = (date = new Date()) => { const d = new Date(date.getTime() - date.getTimezoneOffset() * 60000); return d.toISOString().slice(0, 10); };
 const formatDate = (iso) => { const [y, m, d] = iso.split('-').map(Number); const date = new Date(y, m - 1, d); return `${dayNames[date.getDay()]}, ${d} de ${monthNames[m - 1]}`; };
 function readJSON(key, fallback) { try { const value = localStorage.getItem(key); return value ? JSON.parse(value) : fallback; } catch { return fallback; } }
+
+const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8080')
+  .replace(/\/+$/, '').replace(/\/api$/, '');
+
+function getApiToken() {
+  return localStorage.getItem('smartcarbo-token');
+}
+
+async function apiRequest(path, options = {}) {
+  const token = getApiToken();
+  if (!token) throw new Error('Sua sessão não foi encontrada. Entre novamente.');
+
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers: {
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      Authorization: `Bearer ${token}`,
+      ...options.headers,
+    },
+  });
+
+  if (!response.ok) {
+    let message = `Erro na API (${response.status}).`;
+    try {
+      const body = await response.json();
+      message = body.message || body.mensagem || message;
+    } catch {}
+    if (response.status === 401 || response.status === 403) {
+      message = 'Sua sessão expirou ou não tem permissão. Entre novamente.';
+    }
+    throw new Error(message);
+  }
+
+  if (response.status === 204) return null;
+  return response.json();
+}
+
+const carbsByFoodName = {
+  'Arroz integral cozido': 23,
+  'Peito de frango grelhado': 0,
+  'Banana prata': 23,
+  'Ovo cozido': 0.6,
+  'Batata doce cozida': 20,
+  'Feijão cozido': 14,
+  'Aveia': 20,
+};
+
+function toApiFoodRecord(food, mealTitle, date) {
+  const quantity = Number(food.quantity) > 0 ? Number(food.quantity) : 1;
+  const nutrient = (value) =>
+    Math.round((Number(value) || 0) * quantity * 100) / 100;
+
+  return {
+    nomeAlimento: food.name,
+    quantidade: quantity,
+    tipoRefeicao: mealTitle,
+    // Os valores enviados representam o total da quantidade selecionada.
+    calorias: nutrient(food.baseCalories ?? food.calories / quantity),
+    carboidratos: nutrient(
+      food.baseCarbs ?? food.carbs ?? carbsByFoodName[food.name]
+    ),
+    proteinas: nutrient(food.baseProteins ?? food.proteins),
+    gorduras: nutrient(food.baseFats ?? food.fats),
+    fibras: nutrient(food.baseFiber ?? food.fiber),
+    sodio: nutrient(food.baseSodium ?? food.sodium),
+    dataHora: `${date}T12:00:00`,
+  };
+}
 function Icon({ children }) { return <svg viewBox="0 0 24 24" aria-hidden="true">{children}</svg>; }
 
 function HomeDashboard({ profileName, meals, progress, waterMl, setWaterMl, setActivePage }) {
@@ -43,7 +111,7 @@ function HomeDashboard({ profileName, meals, progress, waterMl, setWaterMl, setA
   const loggedMeals = meals.filter(m => (m.components || []).length > 0);
   const calories = loggedMeals.reduce((sum,m) => sum + (m.components || []).reduce((n,f) => n + (Number(f.calories)||0),0), 0);
   const carbsByName = {'Arroz integral cozido':23,'Peito de frango grelhado':0,'Banana prata':23,'Ovo cozido':0.6,'Batata doce cozida':20,'Feijão cozido':14,'Aveia':20};
-  const carbs = loggedMeals.reduce((sum,m) => sum + (m.components || []).reduce((n,f) => n + (Number(f.carbs) || carbsByName[f.name] || 0),0), 0);
+  const carbs = loggedMeals.reduce((sum,m) => sum + (m.components || []).reduce((n,f) => { const base = Number(f.baseCarbs ?? f.carbs ?? carbsByName[f.name] ?? 0); const quantity = Number(f.quantity) > 0 ? Number(f.quantity) : 1; return n + (f.baseCarbs != null ? base * quantity : (Number(f.carbs) || carbsByName[f.name] || 0)); },0), 0);
   const waterGoal = 2000;
   const percent = Math.min(100, Math.round(calories/calorieGoal*100));
   const dateLabel = new Intl.DateTimeFormat('pt-BR',{weekday:'long',day:'numeric',month:'long',year:'numeric'}).format(new Date());
@@ -67,6 +135,9 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const [selectedDate, setSelectedDate] = useState(() => { const saved = localStorage.getItem(SELECTED_DATE_KEY); return saved && /^\d{4}-\d{2}-\d{2}$/.test(saved) ? saved : localISODate(); });
   const [meals, setMeals] = useState(() => readJSON(TEMPLATE_KEY, []));
+  const [apiFoodRecords, setApiFoodRecords] = useState([]);
+  const [foodApiError, setFoodApiError] = useState('');
+  const [foodApiSaving, setFoodApiSaving] = useState(false);
   const [progress, setProgress] = useState(() => readJSON(progressKey(localStorage.getItem(SELECTED_DATE_KEY) || localISODate()), {}));
   const [search, setSearch] = useState('');
   const [mealDialog, setMealDialog] = useState(false);
@@ -96,6 +167,8 @@ export default function Dashboard() {
   const [profileEmail, setProfileEmail] = useState(() => localStorage.getItem('smartcarbo-profile-email') || 'mariana@email.com');
   const [profileGoal, setProfileGoal] = useState(() => localStorage.getItem('smartcarbo-profile-goal') || 'Melhorar minha alimentação');
   const [profileSaved, setProfileSaved] = useState(false);
+  const [profileError, setProfileError] = useState('');
+  const [profileSaving, setProfileSaving] = useState(false);
   const [profileTab, setProfileTab] = useState('Dados pessoais');
   const [profileEditing, setProfileEditing] = useState(false);
   const [profileGender, setProfileGender] = useState(() => localStorage.getItem('smartcarbo-profile-gender') || '');
@@ -108,6 +181,89 @@ export default function Dashboard() {
   const detailDialogRef = useRef(null);
   const renameDialogRef = useRef(null);
   const removeDialogRef = useRef(null);
+
+  useEffect(() => {
+    const token = localStorage.getItem('smartcarbo-token');
+    if (!token) return;
+    const baseUrl = (import.meta.env.VITE_API_URL || 'http://localhost:8080').replace(/\/+$/, '').replace(/\/api$/, '');
+    fetch(`${baseUrl}/api/v1/usuarios/me`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(async response => {
+        if (!response.ok) return;
+        const user = await response.json();
+        if (user.nome) setProfileName(user.nome);
+        if (user.email) setProfileEmail(user.email);
+        if (user.objetivo) setProfileGoal(user.objetivo);
+        if (user.sexo) setProfileGender(user.sexo);
+        if (user.altura != null) setProfileHeight(String(user.altura));
+        if (user.dataNascimento) setProfileBirth(String(user.dataNascimento).slice(0, 10));
+        if (user.peso != null) setProfileWeight(String(user.peso));
+        localStorage.setItem('smartcarbo-profile-name', user.nome || '');
+        localStorage.setItem('smartcarbo-profile-email', user.email || '');
+      })
+      .catch(error => console.warn('Não foi possível carregar o perfil da API:', error));
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadFoodRecords() {
+      if (!getApiToken()) {
+        setFoodApiError('Entre na sua conta para sincronizar os alimentos.');
+        return;
+      }
+      try {
+        const records = await apiRequest('/api/v1/registros-alimentacao');
+        if (!cancelled) {
+          setApiFoodRecords(Array.isArray(records) ? records : []);
+          setFoodApiError('');
+        }
+      } catch (error) {
+        if (!cancelled) setFoodApiError(error.message || 'Não foi possível carregar os alimentos.');
+      }
+    }
+    loadFoodRecords();
+    return () => { cancelled = true; };
+  }, []);
+
+  async function handleProfileSubmit(event) {
+    event.preventDefault();
+    setProfileError('');
+    setProfileSaved(false);
+    const token = localStorage.getItem('smartcarbo-token');
+    let session = {};
+    try { session = JSON.parse(localStorage.getItem('smartcarbo-session') || '{}'); } catch { session = {}; }
+    if (!token || !session.id) {
+      setProfileError('Faça login novamente para salvar as alterações na sua conta.');
+      return;
+    }
+    const baseUrl = (import.meta.env.VITE_API_URL || 'http://localhost:8080').replace(/\/+$/, '').replace(/\/api$/, '');
+    const payload = {
+      nome: profileName.trim(), email: profileEmail.trim(), objetivo: profileGoal,
+      sexo: profileGender || null,
+      altura: profileHeight.trim() ? Number(profileHeight.replace(',', '.')) : null,
+      dataNascimento: profileBirth || null,
+      peso: profileWeight.trim() ? Number(profileWeight.replace(',', '.')) : null
+    };
+    if (!payload.nome || !payload.email) { setProfileError('Nome e e-mail são obrigatórios.'); return; }
+    if (payload.altura !== null && (!Number.isFinite(payload.altura) || payload.altura <= 0)) { setProfileError('Informe uma altura válida.'); return; }
+    if (payload.peso !== null && (!Number.isFinite(payload.peso) || payload.peso <= 0)) { setProfileError('Informe um peso válido.'); return; }
+    setProfileSaving(true);
+    try {
+      const response = await fetch(`${baseUrl}/api/v1/usuarios/${session.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(payload)
+      });
+      if (!response.ok) {
+        let message = 'Não foi possível salvar o perfil.';
+        try { const body = await response.json(); message = body.message || body.mensagem || message; } catch {}
+        if (response.status === 401 || response.status === 403) message = 'Sua sessão expirou ou você não tem permissão. Entre novamente.';
+        throw new Error(message);
+      }
+      [['name', payload.nome], ['email', payload.email], ['goal', profileGoal], ['gender', profileGender], ['height', profileHeight], ['birth', profileBirth], ['weight', profileWeight], ['food-preference', profileFoodPreference], ['notifications', String(profileNotifications)]].forEach(([key, value]) => localStorage.setItem(`smartcarbo-profile-${key}`, value ?? ''));
+      localStorage.setItem('smartcarbo-session', JSON.stringify({ ...session, nome: payload.nome, email: payload.email }));
+      setProfileName(payload.nome); setProfileEmail(payload.email); setProfileSaved(true); setProfileEditing(false);
+    } catch (error) {
+      setProfileError(error.message || 'Erro ao salvar o perfil. Verifique a conexão com o backend.');
+    } finally { setProfileSaving(false); }
+  }
 
   useEffect(() => { localStorage.setItem(TEMPLATE_KEY, JSON.stringify(meals)); }, [meals]);
   useEffect(() => { localStorage.setItem(SELECTED_DATE_KEY, selectedDate); }, [selectedDate]);
@@ -135,12 +291,170 @@ export default function Dashboard() {
   function toggleComplete(id, checked) { setProgress(old => ({ ...old, [id]: checked })); }
   function addSuggestion(item) { const id = `meal-${Date.now()}`; setMeals(old => [...old, { id, title:item.title, time:'--:--', description:item.description, calories:`${item.foods.reduce((n,f)=>n+f.calories,0)} kcal`, image:fallbackImage, components:item.foods.map((f,i)=>({...f,id:`${id}-${i}`})) }]); setActiveTab('Hoje'); setSearch(''); }
   function historyDate(offset) { const d = new Date(`${selectedDate}T12:00:00`); d.setDate(d.getDate()+offset); return localISODate(d); }
-  function openDetails(meal) { setActiveMealId(meal.id); setActiveComponents((meal.components || []).map(item => ({ ...item }))); setFoodSearch(''); }
-  function saveComponents() { setMeals(old => old.map(meal => meal.id === activeMealId ? { ...meal, components: activeComponents, calories: `${foodTotal} kcal` } : meal)); setActiveMealId(null); }
-  function addFood(food) { setActiveComponents(old => [...old, { ...food, id: `food-${Date.now()}-${Math.random().toString(16).slice(2)}` }]); }
-  function addCustomFood(event) { event.preventDefault(); if (!customFoodName.trim()) return; addFood({ name: customFoodName.trim(), portion: customFoodPortion.trim() || 'Porção não informada', calories: Number(customFoodCalories) || 0, emoji: '🍽️' }); setCustomFoodName(''); setCustomFoodPortion(''); setCustomFoodCalories(''); }
-  function confirmRename(event) { event.preventDefault(); const title = renameValue.trim(); if (!title || !renameTarget) return; setMeals(old => old.map(meal => meal.id === renameTarget.id ? { ...meal, title } : meal)); setRenameTarget(null); }
-  function confirmRemove() { if (!removeTarget) return; setMeals(old => old.filter(meal => meal.id !== removeTarget.id)); setProgress(old => { const next = { ...old }; delete next[removeTarget.id]; return next; }); if (activeMealId === removeTarget.id) setActiveMealId(null); setRemoveTarget(null); }
+  function openDetails(meal) {
+    setActiveMealId(meal.id);
+    const records = apiFoodRecords.filter(record =>
+      record.tipoRefeicao === meal.title &&
+      String(record.dataHora || '').slice(0, 10) === selectedDate
+    );
+    setActiveComponents(records.length ? records.map(record => ({
+      id: `api-${record.id}`, apiId: record.id, name: record.nomeAlimento,
+      portion: `${record.quantidade} porção(ões)`, quantity: Number(record.quantidade) > 0 ? Number(record.quantidade) : 1,
+      calories: Number(record.calorias) || 0,
+      baseCalories: (Number(record.calorias) || 0) / (Number(record.quantidade) > 0 ? Number(record.quantidade) : 1),
+      carbs: Number(record.carboidratos) || 0,
+      baseCarbs: (Number(record.carboidratos) || 0) / (Number(record.quantidade) > 0 ? Number(record.quantidade) : 1),
+      proteins: Number(record.proteinas) || 0,
+      baseProteins: (Number(record.proteinas) || 0) / (Number(record.quantidade) > 0 ? Number(record.quantidade) : 1),
+      fats: Number(record.gorduras) || 0,
+      baseFats: (Number(record.gorduras) || 0) / (Number(record.quantidade) > 0 ? Number(record.quantidade) : 1),
+      fiber: Number(record.fibras) || 0,
+      baseFiber: (Number(record.fibras) || 0) / (Number(record.quantidade) > 0 ? Number(record.quantidade) : 1),
+      sodium: Number(record.sodio) || 0,
+      baseSodium: (Number(record.sodio) || 0) / (Number(record.quantidade) > 0 ? Number(record.quantidade) : 1),
+      emoji: '🍽️',
+    })) : (meal.components || []).map(item => {
+      const quantity = Number(item.quantity) > 0 ? Number(item.quantity) : 1;
+      const calories = Number(item.calories) || 0;
+      return { ...item, quantity, baseCalories: Number(item.baseCalories) || calories / quantity };
+    }));
+    setFoodSearch('');
+    setFoodApiError('');
+  }
+
+  async function saveComponents() {
+    const meal = meals.find(item => item.id === activeMealId);
+    if (!meal) return;
+
+    setFoodApiError('');
+
+    // Salva localmente primeiro: o registro funciona mesmo sem backend.
+    setMeals(old => old.map(item => item.id === activeMealId
+      ? { ...item, components: activeComponents, calories: `${foodTotal} kcal` }
+      : item
+    ));
+    setActiveMealId(null);
+
+    const token = getApiToken();
+    if (!token) return;
+
+    // Se houver sessão, tenta sincronizar os registros com a API.
+    setFoodApiSaving(true);
+    try {
+      const existing = apiFoodRecords.filter(record =>
+        record.tipoRefeicao === meal.title &&
+        String(record.dataHora || '').slice(0, 10) === selectedDate
+      );
+
+      const created = [];
+      for (const food of activeComponents) {
+        const record = await apiRequest('/api/v1/registros-alimentacao', {
+          method: 'POST',
+          body: JSON.stringify(toApiFoodRecord(food, meal.title, selectedDate)),
+        });
+        created.push(record);
+      }
+
+      // Só remove os registros antigos depois que os novos forem criados.
+      await Promise.all(existing.map(record =>
+        apiRequest(`/api/v1/registros-alimentacao/${record.id}`, { method: 'DELETE' })
+      ));
+
+      setApiFoodRecords(old => [
+        ...old.filter(record => !existing.some(item => item.id === record.id)),
+        ...created,
+      ]);
+    } catch (error) {
+      setFoodApiError('Refeição salva neste navegador. Não foi possível sincronizar com o servidor.');
+      console.warn('Falha na sincronização dos alimentos:', error);
+    } finally {
+      setFoodApiSaving(false);
+    }
+  }
+  function addFood(food) {
+    const baseCalories = Number(food.baseCalories ?? food.calories) || 0;
+    const baseCarbs = Number(food.baseCarbs ?? food.carbs ?? carbsByFoodName[food.name] ?? 0) || 0;
+    const baseProteins = Number(food.baseProteins ?? food.proteins) || 0;
+    const baseFats = Number(food.baseFats ?? food.fats) || 0;
+    const baseFiber = Number(food.baseFiber ?? food.fiber) || 0;
+    const baseSodium = Number(food.baseSodium ?? food.sodium) || 0;
+    setActiveComponents(old => [...old, {
+      ...food,
+      quantity: 1,
+      baseCalories, baseCarbs, baseProteins, baseFats, baseFiber, baseSodium,
+      calories: baseCalories, carbs: baseCarbs, proteins: baseProteins,
+      fats: baseFats, fiber: baseFiber, sodium: baseSodium,
+      id: `food-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    }]);
+  }
+  function updateFoodQuantity(index, value) {
+    const quantity = Number(value);
+    if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 1000) return;
+    setActiveComponents(old => old.map((food, i) => {
+      if (i !== index) return food;
+      const base = (key, fallback) => Number(food[key] ?? food[fallback] ?? 0) || 0;
+      const baseCalories = base('baseCalories', 'calories');
+      const baseCarbs = base('baseCarbs', 'carbs') || Number(carbsByFoodName[food.name]) || 0;
+      const baseProteins = base('baseProteins', 'proteins');
+      const baseFats = base('baseFats', 'fats');
+      const baseFiber = base('baseFiber', 'fiber');
+      const baseSodium = base('baseSodium', 'sodium');
+      const total = n => Math.round(n * quantity * 100) / 100;
+      return { ...food, quantity, baseCalories, baseCarbs, baseProteins, baseFats, baseFiber, baseSodium,
+        calories: total(baseCalories), carbs: total(baseCarbs), proteins: total(baseProteins),
+        fats: total(baseFats), fiber: total(baseFiber), sodium: total(baseSodium) };
+    }));
+  }
+  function addCustomFood(event) {
+    event.preventDefault();
+    if (!customFoodName.trim()) return;
+    addFood({ name: customFoodName.trim(), portion: customFoodPortion.trim() || 'Porção não informada', calories: Number(customFoodCalories) || 0, emoji: '🍽️' });
+    setCustomFoodName(''); setCustomFoodPortion(''); setCustomFoodCalories('');
+  }
+  async function confirmRename(event) {
+    event.preventDefault();
+    const title = renameValue.trim();
+    if (!title || !renameTarget) return;
+    const target = renameTarget;
+    setMeals(old => old.map(meal => meal.id === target.id ? { ...meal, title } : meal));
+    setRenameTarget(null);
+    const recordsToRename = apiFoodRecords.filter(record => record.tipoRefeicao === target.title);
+    if (!getApiToken() || recordsToRename.length === 0) return;
+    try {
+      const updated = await Promise.all(recordsToRename.map(record => apiRequest(`/api/v1/registros-alimentacao/${record.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ ...record, tipoRefeicao: title }),
+      })));
+      setApiFoodRecords(old => old.map(record => {
+        const replacement = updated.find(item => item && item.id === record.id);
+        return replacement || (record.tipoRefeicao === target.title ? { ...record, tipoRefeicao: title } : record);
+      }));
+    } catch (error) {
+      console.warn('O nome foi alterado localmente, mas não foi sincronizado com a API:', error);
+      setFoodApiError('Nome alterado neste navegador. A sincronização com o servidor será revisada quando a API estiver disponível.');
+    }
+  }
+  async function confirmRemove() {
+    if (!removeTarget) return;
+    const target = removeTarget;
+    // A exclusão local é imediata e continua funcionando sem o banco configurado.
+    setMeals(old => old.filter(meal => meal.id !== target.id));
+    setProgress(old => { const next = { ...old }; delete next[target.id]; return next; });
+    if (activeMealId === target.id) setActiveMealId(null);
+    setRemoveTarget(null);
+    const recordsToDelete = apiFoodRecords.filter(record => record.tipoRefeicao === target.title);
+    if (!getApiToken() || recordsToDelete.length === 0) {
+      setApiFoodRecords(old => old.filter(record => record.tipoRefeicao !== target.title));
+      return;
+    }
+    try {
+      await Promise.all(recordsToDelete.map(record => apiRequest(`/api/v1/registros-alimentacao/${record.id}`, { method: 'DELETE' })));
+      setApiFoodRecords(old => old.filter(record => record.tipoRefeicao !== target.title));
+    } catch (error) {
+      console.warn('A refeição foi removida do navegador, mas a exclusão na API falhou:', error);
+      setFoodApiError('A refeição foi removida deste navegador. A sincronização com o servidor será revisada quando a API estiver disponível.');
+    }
+  }
 
   return <div className="app-shell">
     <aside className="sidebar" aria-label="Navegação principal">
@@ -166,7 +480,7 @@ export default function Dashboard() {
         <p>Tem certeza de que deseja sair da sua conta? Seus registros salvos neste navegador continuarão aqui quando você voltar.</p>
         <div className="logout-confirm-actions">
           <button type="button" className="logout-stay-button" onClick={() => setLogoutConfirmOpen(false)}>Continuar no SmartCarbo</button>
-          <button type="button" className="logout-leave-button" onClick={() => { localStorage.removeItem('smartcarbo-auth'); localStorage.removeItem('token'); localStorage.removeItem('smartcarbo-ultima-pagina'); setLogoutConfirmOpen(false); navigate('/login', { replace: true }); }}>Sim, quero sair</button>
+          <button type="button" className="logout-leave-button" onClick={() => { localStorage.removeItem('smartcarbo-auth'); localStorage.removeItem('token'); localStorage.removeItem('smartcarbo-token'); localStorage.removeItem('smartcarbo-session'); localStorage.removeItem('smartcarbo-ultima-pagina'); setLogoutConfirmOpen(false); navigate('/login', { replace: true }); }}>Sim, quero sair</button>
         </div>
       </section>
     </div>}
@@ -181,13 +495,13 @@ export default function Dashboard() {
       <section className="profile-page">
 <div className="profile-heading"><h1>Meu perfil</h1><p>Gerencie suas informações e preferências.</p></div>
 <div className="profile-tabs" role="tablist" aria-label="Seções do perfil">{['Dados pessoais','Objetivos','Preferências','Configurações'].map(tab=><button key={tab} type="button" role="tab" aria-selected={profileTab===tab} className={`profile-tab ${profileTab===tab?'profile-tab--active':''}`} onClick={()=>{setProfileTab(tab);setProfileSaved(false);}}>{tab}</button>)}</div>
-<form className="profile-form" onSubmit={e=>{e.preventDefault();[['name',profileName.trim()],['email',profileEmail.trim()],['goal',profileGoal],['gender',profileGender],['height',profileHeight],['birth',profileBirth],['weight',profileWeight],['food-preference',profileFoodPreference],['notifications',String(profileNotifications)]].forEach(([k,v])=>localStorage.setItem('smartcarbo-profile-'+k,v));setProfileName(profileName.trim());setProfileSaved(true);setProfileEditing(false);}}>
+<form className="profile-form" onSubmit={handleProfileSubmit}>
 <div className="profile-form__heading"><div className="profile-avatar-wrap"><div className="profile-avatar-large">{(profileName.trim().split(/\s+/).map(x=>x[0]).join('').slice(0,2)||'SC').toUpperCase()}</div><span className="profile-camera">◎</span></div><div className="profile-form__heading-copy"><span className="profile-plan">Plano Gratuito</span><h2>{profileName||'Seu nome'}</h2><p>{profileEmail}</p></div><button type="button" className="profile-edit-button" onClick={()=>{setProfileEditing(v=>!v);setProfileSaved(false);}}>{profileEditing?'Cancelar edição':'✎ Editar informações'}</button></div>
 {profileTab==='Dados pessoais'&&<div className="profile-panel"><div className="profile-panel-title"><h2>Dados pessoais</h2><p>Informações básicas da sua conta.</p></div><div className="profile-fields"><label>Nome completo<input disabled={!profileEditing} value={profileName} onChange={e=>setProfileName(e.target.value)} required maxLength={80}/></label><label>Sexo<select disabled={!profileEditing} value={profileGender} onChange={e=>setProfileGender(e.target.value)}><option value="">Selecione</option><option>Feminino</option><option>Masculino</option><option>Prefiro não informar</option><option>Outro</option></select></label><label>E-mail<input disabled={!profileEditing} type="email" value={profileEmail} onChange={e=>setProfileEmail(e.target.value)} required/></label><label>Altura (cm)<input disabled={!profileEditing} type="number" min="1" max="300" value={profileHeight} onChange={e=>setProfileHeight(e.target.value)} placeholder="Ex.: 165"/></label><label>Data de nascimento<input disabled={!profileEditing} type="date" value={profileBirth} onChange={e=>setProfileBirth(e.target.value)}/></label><label>Peso (kg)<input disabled={!profileEditing} type="number" min="1" max="500" step=".1" value={profileWeight} onChange={e=>setProfileWeight(e.target.value)} placeholder="Ex.: 60"/></label></div></div>}
 {profileTab==='Objetivos'&&<div className="profile-panel"><div className="profile-panel-title"><h2>Objetivos</h2><p>O que você quer priorizar?</p></div><div className="profile-fields profile-fields--single"><label>Objetivo principal<select disabled={!profileEditing} value={profileGoal} onChange={e=>setProfileGoal(e.target.value)}><option>Melhorar minha alimentação</option><option>Acompanhar carboidratos</option><option>Organizar minhas refeições</option><option>Ter uma rotina alimentar variada</option></select></label><p className="profile-tip">Registre suas refeições aos poucos e use o Histórico para acompanhar sua rotina.</p></div></div>}
 {profileTab==='Preferências'&&<div className="profile-panel"><div className="profile-panel-title"><h2>Preferências alimentares</h2><p>Personalize as sugestões exibidas para você.</p></div><div className="profile-fields profile-fields--single"><label>Preferência alimentar<select disabled={!profileEditing} value={profileFoodPreference} onChange={e=>setProfileFoodPreference(e.target.value)}><option>Sem preferência específica</option><option>Vegetariana</option><option>Vegana</option><option>Sem lactose</option><option>Sem glúten</option></select></label><p className="profile-tip">Nesta versão, a preferência fica salva no perfil, mas ainda não filtra automaticamente todas as sugestões.</p></div></div>}
 {profileTab==='Configurações'&&<div className="profile-panel"><div className="profile-panel-title"><h2>Configurações</h2><p>Controle as opções do aplicativo.</p></div><label className="profile-toggle"><span><strong>Notificações no aplicativo</strong><small>Receber avisos e dicas no sininho.</small></span><input type="checkbox" disabled={!profileEditing} checked={profileNotifications} onChange={e=>setProfileNotifications(e.target.checked)}/></label><p className="profile-tip">Os dados desta página são salvos somente neste navegador.</p></div>}
-<div className="profile-form__footer">{profileSaved&&<span className="profile-saved">✓ Alterações salvas neste navegador</span>}{profileEditing&&<button type="submit" className="primary-button">Salvar alterações</button>}</div></form>
+<div className="profile-form__footer">{profileError&&<span className="profile-error" role="alert">{profileError}</span>}{profileSaved&&<span className="profile-saved">✓ Alterações salvas na sua conta</span>}{profileEditing&&<button type="submit" className="primary-button" disabled={profileSaving}>{profileSaving?'Salvando...':'Salvar alterações'}</button>}</div></form>
 </section>
       <section className="page-heading"><div><h1>Refeições</h1><p>Registre e acompanhe suas refeições diárias.</p></div><label className="date-picker"><Icon><rect x="3.5" y="5" width="17" height="16" rx="2"/><path d="M7.5 3v4M16.5 3v4M4 9h16M8 13h3M8 16h3"/></Icon><span>{formatDate(selectedDate)}</span><input className="date-picker__input" type="date" aria-label="Selecionar data das refeições" value={selectedDate} onChange={e => e.target.value && setSelectedDate(e.target.value)}/><Icon><path d="m7 10 5 5 5-5"/></Icon></label></section>
       <section className="meal-toolbar"><div className="tabs" role="tablist" aria-label="Visualização de refeições">{['Hoje', 'Histórico', 'Sugestões'].map(tab => <button key={tab} className={`tabs__item ${activeTab === tab ? 'tabs__item--active' : ''}`} role="tab" aria-selected={activeTab === tab} onClick={() => setActiveTab(tab)}>{tab}</button>)}</div><button className="primary-button" type="button" onClick={() => { setMealName(''); setMealDescription(''); setMealError(''); setMealDialog(true); }}><Icon><path d="M12 5v14M5 12h14"/></Icon>Adicionar refeição</button></section>
@@ -203,7 +517,7 @@ export default function Dashboard() {
 
     <dialog className="meal-dialog" ref={mealDialogRef} onClick={e => { if (e.target === mealDialogRef.current) setMealDialog(false); }}><form className="meal-form" onSubmit={createMeal}><div className="meal-form__header"><div><h2>Adicionar refeição</h2><p>Adicione à sua rotina alimentar compartilhada.</p></div><button className="meal-form__close" type="button" aria-label="Fechar" onClick={() => setMealDialog(false)}>×</button></div><label className="form-field"><span>Nome da refeição *</span><input autoFocus name="title" required maxLength="60" placeholder="Ex.: Café da manhã" value={mealName} onChange={e => setMealName(e.target.value)}/></label><label className="form-field"><span>Descrição (opcional)</span><input name="description" maxLength="120" placeholder="Ex.: Primeira refeição do dia" value={mealDescription} onChange={e => setMealDescription(e.target.value)}/></label>{mealError && <p className="meal-form__error">{mealError}</p>}<div className="meal-form__actions"><button className="secondary-button" type="button" onClick={() => setMealDialog(false)}>Cancelar</button><button className="primary-button" type="submit">Salvar refeição</button></div></form></dialog>
 
-    <dialog className="detail-dialog" ref={detailDialogRef} onClick={e => { if (e.target === detailDialogRef.current) setActiveMealId(null); }}><div className="detail-page"><header className="detail-header"><button className="detail-back" type="button" onClick={() => setActiveMealId(null)} aria-label="Voltar">←</button><div className="detail-heading"><h2 id="detail-title">{activeMeal?.title || 'Adicionar componentes'}</h2><p>{activeMeal?.description || 'Monte sua refeição adicionando os alimentos.'}</p></div><button className="meal-form__close" type="button" onClick={() => setActiveMealId(null)} aria-label="Fechar">×</button></header><div className="detail-columns"><section className="food-browser"><div className="food-tabs"><span className="food-tab food-tab--active">Buscar alimentos</span><span className="food-tab">Meus alimentos</span><span className="food-tab">Escanear (IA)</span></div><label className="food-search"><span>⌕</span><input type="search" placeholder="Buscar alimento (ex.: arroz, banana, frango...)" value={foodSearch} onChange={e => setFoodSearch(e.target.value)}/></label><h3>Resultados</h3><div className="food-results">{foodResults.length ? foodResults.map(food => <div className="food-result" key={food.name}><span className="food-emoji">{food.emoji}</span><div className="food-result__copy"><strong>{food.name}</strong><small>{food.portion}</small></div><span className="food-kcal">{food.calories} kcal</span><button className="food-add" type="button" onClick={() => addFood(food)}>+</button></div>) : <p className="food-no-results">Nenhum alimento encontrado. Você pode adicioná-lo abaixo.</p>}</div><form className="custom-food-form" onSubmit={addCustomFood}><h3>Adicionar outro alimento</h3><div className="custom-food-fields"><input required maxLength="70" placeholder="Nome do alimento" value={customFoodName} onChange={e => setCustomFoodName(e.target.value)}/><input maxLength="40" placeholder="Porção (ex.: 1 unidade)" value={customFoodPortion} onChange={e => setCustomFoodPortion(e.target.value)}/><input type="number" min="0" max="10000" placeholder="kcal" value={customFoodCalories} onChange={e => setCustomFoodCalories(e.target.value)}/></div><button className="secondary-button" type="submit">+ Adicionar alimento personalizado</button></form></section><aside className="selected-foods"><div className="selected-foods__top"><h3>Itens adicionados ({activeComponents.length})</h3><button type="button" onClick={() => setActiveComponents([])}>Limpar tudo</button></div><div className="selected-food-list">{activeComponents.map((food, index) => <div className="selected-food" key={food.id || `${food.name}-${index}`}><span className="food-emoji">{food.emoji || '🍽️'}</span><div className="selected-food__copy"><strong>{food.name}</strong><small>{food.portion || 'Porção não informada'}</small><small>{Number(food.calories) || 0} kcal</small></div><button className="food-remove" type="button" aria-label={`Remover ${food.name}`} onClick={() => setActiveComponents(old => old.filter((_, i) => i !== index))}>×</button></div>)}</div><div className="food-total">Total: <strong>{foodTotal} kcal</strong></div><button className="primary-button detail-save" type="button" onClick={saveComponents}>Salvar refeição</button></aside></div></div></dialog>
+    <dialog className="detail-dialog" ref={detailDialogRef} onClick={e => { if (e.target === detailDialogRef.current) setActiveMealId(null); }}><div className="detail-page"><header className="detail-header"><button className="detail-back" type="button" onClick={() => setActiveMealId(null)} aria-label="Voltar">←</button><div className="detail-heading"><h2 id="detail-title">{activeMeal?.title || 'Adicionar componentes'}</h2><p>{activeMeal?.description || 'Monte sua refeição adicionando os alimentos.'}</p></div><button className="meal-form__close" type="button" onClick={() => setActiveMealId(null)} aria-label="Fechar">×</button></header><div className="detail-columns"><section className="food-browser"><div className="food-tabs"><span className="food-tab food-tab--active">Buscar alimentos</span><span className="food-tab">Meus alimentos</span><span className="food-tab">Escanear (IA)</span></div><label className="food-search"><span>⌕</span><input type="search" placeholder="Buscar alimento (ex.: arroz, banana, frango...)" value={foodSearch} onChange={e => setFoodSearch(e.target.value)}/></label><h3>Resultados</h3><div className="food-results">{foodResults.length ? foodResults.map(food => <div className="food-result" key={food.name}><span className="food-emoji">{food.emoji}</span><div className="food-result__copy"><strong>{food.name}</strong><small>{food.portion}</small></div><span className="food-kcal">{food.calories} kcal</span><button className="food-add" type="button" onClick={() => addFood(food)}>+</button></div>) : <p className="food-no-results">Nenhum alimento encontrado. Você pode adicioná-lo abaixo.</p>}</div><form className="custom-food-form" onSubmit={addCustomFood}><h3>Adicionar outro alimento</h3><div className="custom-food-fields"><input required maxLength="70" placeholder="Nome do alimento" value={customFoodName} onChange={e => setCustomFoodName(e.target.value)}/><input maxLength="40" placeholder="Porção (ex.: 1 unidade)" value={customFoodPortion} onChange={e => setCustomFoodPortion(e.target.value)}/><input type="number" min="0" max="10000" placeholder="kcal" value={customFoodCalories} onChange={e => setCustomFoodCalories(e.target.value)}/></div><button className="secondary-button" type="submit">+ Adicionar alimento personalizado</button></form></section><aside className="selected-foods"><div className="selected-foods__top"><h3>Itens adicionados ({activeComponents.length})</h3><button type="button" onClick={() => setActiveComponents([])}>Limpar tudo</button></div><div className="selected-food-list">{activeComponents.map((food, index) => <div className="selected-food" key={food.id || `${food.name}-${index}`}><span className="food-emoji">{food.emoji || '🍽️'}</span><div className="selected-food__copy"><strong>{food.name}</strong><small>{food.portion || 'Porção não informada'}</small><label style={{display:'flex',alignItems:'center',gap:'6px',marginTop:'6px',fontSize:'0.85rem'}}>Quantidade <input aria-label={`Quantidade de ${food.name}`} type="number" min="0.1" max="1000" step="0.1" value={food.quantity ?? 1} onChange={e=>updateFoodQuantity(index,e.target.value)} style={{width:'76px',padding:'5px 7px',border:'1px solid #d8ded7',borderRadius:'8px'}} /></label><small>{Number(food.calories) || 0} kcal no total</small></div><button className="food-remove" type="button" aria-label={`Remover ${food.name}`} onClick={() => setActiveComponents(old => old.filter((_, i) => i !== index))}>×</button></div>)}</div><div className="food-total">Total: <strong>{foodTotal} kcal</strong></div>{foodApiError && <p className="meal-form__error" role="alert">{foodApiError}</p>}<button className="primary-button detail-save" type="button" onClick={saveComponents} disabled={foodApiSaving}>{foodApiSaving ? 'Salvando...' : 'Salvar refeição'}</button></aside></div></div></dialog>
 
     <dialog className="rename-dialog" ref={renameDialogRef} onClick={e => { if (e.target === renameDialogRef.current) setRenameTarget(null); }}><form className="rename-form" onSubmit={confirmRename}><div className="rename-hero"><span className="rename-hero__icon">✎</span><button type="button" className="rename-close" onClick={() => setRenameTarget(null)} aria-label="Fechar">×</button></div><p className="rename-eyebrow">ORGANIZE SUAS REFEIÇÕES</p><h2 id="rename-title">Como vamos chamar?</h2><p className="rename-description">Dê um nome fácil de reconhecer para esta refeição.</p><label className="rename-label" htmlFor="rename-input">Nome da refeição</label><input id="rename-input" className="rename-input" type="text" maxLength="60" required autoComplete="off" placeholder="Ex.: Café da manhã" value={renameValue} onChange={e => setRenameValue(e.target.value)}/><p className="rename-hint">✦ Você pode mudar esse nome quando quiser.</p><div className="rename-actions"><button type="button" className="rename-cancel" onClick={() => setRenameTarget(null)}>Cancelar</button><button type="submit" className="rename-confirm">✓ Salvar nome</button></div></form></dialog>
 
