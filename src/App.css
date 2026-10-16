@@ -434,9 +434,36 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 
 
 /* Menu de ações dos três pontinhos de cada refeição */
-.meal-card { position: relative; }
-.more-button { position: relative; z-index: 2; cursor: pointer; }
-.meal-actions-menu { position: absolute; z-index: 20; top: calc(100% - 8px); right: 12px; min-width: 180px; display: grid; gap: 3px; padding: 6px; border: 1px solid #e0e9e4; border-radius: 12px; background: #fff; box-shadow: 0 12px 30px rgba(15, 49, 39, .16); }
+.meal-list {
+  position: relative;
+  overflow: visible;
+}
+.meal-card {
+  position: relative;
+  overflow: visible;
+}
+.meal-card:has(.meal-actions-menu) {
+  z-index: 30;
+}
+.more-button {
+  position: relative;
+  z-index: 31;
+  cursor: pointer;
+}
+.meal-actions-menu {
+  position: absolute;
+  z-index: 32;
+  top: calc(100% - 8px);
+  right: 12px;
+  min-width: 180px;
+  display: grid;
+  gap: 3px;
+  padding: 6px;
+  border: 1px solid #e0e9e4;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 12px 30px rgba(15, 49, 39, .16);
+}
 .meal-actions-menu__item { width: 100%; min-height: 38px; padding: 0 11px; border: 0; border-radius: 8px; background: transparent; color: #21483d; text-align: left; font: inherit; font-size: 12px; cursor: pointer; }
 .meal-actions-menu__item:hover, .meal-actions-menu__item:focus-visible { outline: none; background: #eef7f2; }
 .meal-actions-menu__item--danger { color: #b42318; }

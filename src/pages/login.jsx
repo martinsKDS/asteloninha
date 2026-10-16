@@ -1,3 +1,4 @@
+
 import "./login.css";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -25,17 +26,23 @@ function Login() {
 
     if (!email.trim()) {
       newErrors.email = "Campo obrigatório.";
-    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+    } else if (
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
+    ) {
       newErrors.email = "Digite um e-mail válido.";
     }
 
     if (!password) {
       newErrors.password = "Campo obrigatório.";
     } else if (password.length < 8) {
-      newErrors.password = "A senha deve ter pelo menos 8 caracteres.";
+      newErrors.password =
+        "A senha deve ter pelo menos 8 caracteres.";
     }
 
-    setErrors({ ...newErrors, general: "" });
+    setErrors({
+      ...newErrors,
+      general: "",
+    });
 
     if (Object.keys(newErrors).length > 0) {
       return;
@@ -44,25 +51,34 @@ function Login() {
     setLoading(true);
 
     try {
+      // Remove barras finais e um possível /api duplicado.
       const baseUrl = (
-        import.meta.env.VITE_API_URL || "http://localhost:8080"
-      ).replace(/\/+$/, "");
+        import.meta.env.VITE_API_URL ||
+        "http://localhost:8080"
+      )
+        .replace(/\/+$/, "")
+        .replace(/\/api$/, "");
 
-      const response = await fetch(`${baseUrl}/api/auth/login`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          email: email.trim(),
-          senha: password,
-        }),
-      });
+      const response = await fetch(
+        `${baseUrl}/api/auth/login`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({
+            email: email.trim(),
+            senha: password,
+          }),
+        }
+      );
 
       if (response.status === 400) {
         setErrors((previous) => ({
           ...previous,
-          general: "Preencha corretamente o e-mail e a senha.",
+          general:
+            "Preencha corretamente o e-mail e a senha.",
         }));
         return;
       }
@@ -76,17 +92,26 @@ function Login() {
       }
 
       if (!response.ok) {
-        throw new Error("Não foi possível realizar o login.");
+        throw new Error(
+          `Não foi possível realizar o login (HTTP ${response.status}).`
+        );
       }
 
       const data = await response.json();
 
       if (!data.token) {
-        throw new Error("A API não retornou o token de autenticação.");
+        throw new Error(
+          "A API não retornou o token de autenticação."
+        );
       }
 
-      localStorage.setItem("smartcarbo-token", data.token);
+      // Salva o token usado nas requisições autenticadas.
+      localStorage.setItem(
+        "smartcarbo-token",
+        data.token
+      );
 
+      // Salva os dados básicos da sessão.
       localStorage.setItem(
         "smartcarbo-session",
         JSON.stringify({
@@ -94,6 +119,12 @@ function Login() {
           nome: data.nome,
           email: data.email,
         })
+      );
+
+      // Sempre abre a página inicial após o login.
+      localStorage.setItem(
+        "smartcarbo-ultima-pagina",
+        "Início"
       );
 
       navigate("/app", { replace: true });
@@ -105,7 +136,8 @@ function Login() {
         general:
           error instanceof TypeError
             ? "Não foi possível conectar ao servidor. Verifique se o backend está funcionando."
-            : error.message || "Ocorreu um erro ao realizar o login.",
+            : error.message ||
+              "Ocorreu um erro ao realizar o login.",
       }));
     } finally {
       setLoading(false);
@@ -143,7 +175,11 @@ function Login() {
             <p>Faça login para continuar sua jornada.</p>
           </div>
 
-          <form className="login-form" onSubmit={handleLogin} noValidate>
+          <form
+            className="login-form"
+            onSubmit={handleLogin}
+            noValidate
+          >
             <div className="form-group">
               <label htmlFor="email">E-mail</label>
 
@@ -162,12 +198,16 @@ function Login() {
                     general: "",
                   }));
                 }}
-                className={errors.email ? "input-error" : ""}
+                className={
+                  errors.email ? "input-error" : ""
+                }
                 disabled={loading}
               />
 
               {errors.email && (
-                <span className="error-message">{errors.email}</span>
+                <span className="error-message">
+                  {errors.email}
+                </span>
               )}
             </div>
 
@@ -190,13 +230,17 @@ function Login() {
                       general: "",
                     }));
                   }}
-                  className={errors.password ? "input-error" : ""}
+                  className={
+                    errors.password ? "input-error" : ""
+                  }
                   disabled={loading}
                 />
               </div>
 
               {errors.password && (
-                <span className="error-message">{errors.password}</span>
+                <span className="error-message">
+                  {errors.password}
+                </span>
               )}
             </div>
 
@@ -243,10 +287,15 @@ function Login() {
               type="button"
               className="social-button"
               onClick={() =>
-                window.alert("Login com Google ainda não implementado.")
+                window.alert(
+                  "Login com Google ainda não implementado."
+                )
               }
             >
-              <span className="social-icon social-icon--google" aria-hidden="true">
+              <span
+                className="social-icon social-icon--google"
+                aria-hidden="true"
+              >
                 G
               </span>
               <span>Google</span>
@@ -256,10 +305,15 @@ function Login() {
               type="button"
               className="social-button"
               onClick={() =>
-                window.alert("Login com Apple ainda não implementado.")
+                window.alert(
+                  "Login com Apple ainda não implementado."
+                )
               }
             >
-              <span className="social-icon social-icon--apple" aria-hidden="true">
+              <span
+                className="social-icon social-icon--apple"
+                aria-hidden="true"
+              >
                 ●
               </span>
               <span>Apple</span>
@@ -269,14 +323,19 @@ function Login() {
               type="button"
               className="social-button"
               onClick={() =>
-                window.alert("Login com Microsoft ainda não implementado.")
+                window.alert(
+                  "Login com Microsoft ainda não implementado."
+                )
               }
             >
               <span
                 className="social-icon social-icon--microsoft"
                 aria-hidden="true"
               >
-                <i></i><i></i><i></i><i></i>
+                <i></i>
+                <i></i>
+                <i></i>
+                <i></i>
               </span>
               <span>Microsoft</span>
             </button>

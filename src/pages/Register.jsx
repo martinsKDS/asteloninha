@@ -240,11 +240,16 @@ function Register() {
       try {
         const baseUrl = (
           import.meta.env.VITE_API_URL || "http://localhost:8080"
-        ).replace(/\/+$/, "");
+        )
+          .replace(/\/+$/, "")
+          .replace(/\/api$/, "");
 
         const response = await fetch(`${baseUrl}/api/v1/usuarios`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
           body: JSON.stringify(dadosUsuario),
         });
 

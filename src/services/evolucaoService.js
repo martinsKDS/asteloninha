@@ -1,130 +1,276 @@
-import { MOCK } from '../mocks/evolucaoMock.js'
+import { MOCK } from '../mocks/evolucaoMock.js';
 
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8080/api'
-const USE_MOCK = import.meta.env.VITE_USE_MOCK !== 'false'
+const API_BASE_URL = (
+  import.meta.env.VITE_API_URL ?? 'http://localhost:8080/api'
+).replace(/\/$/, '');
 
-const CHAVE_REGISTROS = 'smartcarbo:mock:pesos'
+const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true';
+const TOKEN_KEY = 'smartcarbo-token';
 
-const fmt = (n) => Number(n).toLocaleString('pt-BR', { maximumFractionDigits: 1 })
-const arredondar = (n) => Math.round(n * 10) / 10
-const espera = (ms) => new Promise((r) => setTimeout(r, ms))
+const formatNumber = (value) =>
+  Number(value).toLocaleString('pt-BR', {
+    maximumFractionDigits: 1,
+  });
+
+const round1 = (value) => Math.round(value * 10) / 10;
+
+const dateLabel = (iso) =>
+  `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
 
 function headers(extra = {}) {
-  const token = localStorage.getItem('token') // JWT emitido pelo Spring Security
+  const token = localStorage.getItem(TOKEN_KEY);
+
   return {
     Accept: 'application/json',
     ...extra,
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  }
+  };
 }
 
-// ---------- Modo mock: pesos registrados ficam salvos no navegador ----------
+async function parseError(response, fallback) {
+  let message = fallback;
 
-function lerRegistros() {
   try {
-    const lista = JSON.parse(localStorage.getItem(CHAVE_REGISTROS))
-    return Array.isArray(lista) ? lista : []
+    const body = await response.json();
+
+    if (body?.message) {
+      message = body.message;
+    } else if (body?.mensagem) {
+      message = body.mensagem;
+    }
   } catch {
-    return []
+    // A resposta não contém JSON.
   }
-}
 
-function salvarRegistros(lista) {
-  try {
-    localStorage.setItem(CHAVE_REGISTROS, JSON.stringify(lista))
-  } catch {
-    /* sem acesso ao storage: o registro só não persiste */
+  if (response.status === 401) {
+    message = 'Sua sessão expirou. Entre novamente no SmartCarbo.';
   }
+
+  if (response.status === 403) {
+    message = 'Você não tem permissão para acessar estes dados.';
+  }
+
+  return new Error(`${message} (HTTP ${response.status})`);
 }
 
-const rotulo = (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}` // yyyy-MM-dd -> dd/MM
+function filterPeriod(records, period) {
+  const today = new Date();
+  today.setHours(23, 59, 59, 999);
 
-function progressoMeta(inicio, atual, meta) {
-  if (inicio === meta) return 100
-  const p = ((inicio - atual) / (inicio - meta)) * 100
-  return Math.round(Math.min(100, Math.max(0, p)))
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - (Number(period) - 1));
+
+  return records
+    .filter((record) => {
+      if (!record.data) return false;
+
+      const date = new Date(`${record.data}T12:00:00`);
+
+      return (
+        !Number.isNaN(date.getTime()) &&
+        date >= start &&
+        date <= today
+      );
+    })
+    .sort((a, b) => a.data.localeCompare(b.data));
 }
 
-// Junta os pesos registrados pelo usuário à série de exemplo e recalcula os cards.
-function pesoComRegistros(base, periodo) {
-  const limite = new Date()
-  limite.setDate(limite.getDate() - periodo)
-  limite.setHours(0, 0, 0, 0)
+function buildWeightEvolution(records, period) {
+  const filtered = filterPeriod(records, period);
 
-  const registros = lerRegistros()
-    .filter((r) => new Date(`${r.data}T00:00:00`) >= limite)
-    .sort((a, b) => a.data.localeCompare(b.data))
-  if (registros.length === 0) return base
+  const serie = filtered.map((record) => ({
+    data: dateLabel(record.data),
+    valor: Number(record.peso),
+  }));
 
-  const serie = [...base.serie, ...registros.map((r) => ({ data: rotulo(r.data), valor: r.valor }))]
-  const inicio = serie[0].valor
-  const atual = serie[serie.length - 1].valor
-  const variacao = arredondar(atual - inicio)
-  const meta = base.meta.valor
+  const eixoY = serie.length
+    ? {
+        min: Math.floor(
+          Math.min(...serie.map((p) => p.valor)) - 2
+        ),
+        max: Math.ceil(
+          Math.max(...serie.map((p) => p.valor)) + 2
+        ),
+        passo: 1,
+      }
+    : {
+        min: 40,
+        max: 100,
+        passo: 10,
+      };
 
-  const resumo = [
-    { rotulo: 'Peso atual', valor: `${fmt(atual)} kg`, legenda: 'último registro', icone: 'down' },
-    {
-      rotulo: 'Variação',
-      valor: `${variacao > 0 ? '+' : ''}${fmt(variacao)} kg`,
-      legenda: `últimos ${periodo} dias`,
-      icone: variacao > 0 ? 'trend-up' : 'trend-down',
-    },
-    {
-      rotulo: 'Meta',
-      valor: `${fmt(meta)} kg`,
-      legenda: atual <= meta ? 'meta atingida' : `faltam ${fmt(arredondar(atual - meta))} kg`,
-      icone: 'flag',
-      progresso: progressoMeta(inicio, atual, meta),
-    },
-  ]
+  if (!serie.length) {
+    return {
+      titulo: 'Seu peso (kg)',
+      unidade: 'kg',
+      eixoY,
+      meta: null,
+      serie,
+      resumo: [
+        {
+          rotulo: 'Peso atual',
+          valor: '—',
+          legenda: 'registre uma medição',
+          icone: 'up',
+        },
+        {
+          rotulo: 'Variação',
+          valor: '—',
+          legenda: `últimos ${period} dias`,
+          icone: 'trend-up',
+        },
+        {
+          rotulo: 'Meta',
+          valor: 'Não definida',
+          legenda: 'defina uma meta no perfil',
+          icone: 'flag',
+        },
+      ],
+    };
+  }
 
-  return { ...base, serie, resumo }
+  const first = serie[0].valor;
+  const current = serie[serie.length - 1].valor;
+  const variation = round1(current - first);
+
+  return {
+    titulo: 'Seu peso (kg)',
+    unidade: 'kg',
+    eixoY,
+    meta: null,
+    serie,
+    resumo: [
+      {
+        rotulo: 'Peso atual',
+        valor: `${formatNumber(current)} kg`,
+        legenda: 'último registro',
+        icone: variation > 0 ? 'up' : 'down',
+      },
+      {
+        rotulo: 'Variação',
+        valor: `${variation > 0 ? '+' : ''}${formatNumber(variation)} kg`,
+        legenda: `últimos ${period} dias`,
+        icone: variation > 0 ? 'trend-up' : 'trend-down',
+      },
+      {
+        rotulo: 'Registros',
+        valor: String(serie.length),
+        legenda: `últimos ${period} dias`,
+        icone: 'flag',
+      },
+    ],
+  };
 }
-
-// ---------- API pública do serviço ----------
 
 /**
- * Busca a evolução do usuário.
- * @param {{ tipo: 'peso'|'calorias'|'health-score', periodo: 7|30|90 }} params
+ * Busca dados de evolução.
+ * O histórico de peso utiliza a API real do backend.
+ * Calorias e Health Score aguardam endpoints próprios.
  */
 export async function buscarEvolucao({ tipo, periodo }) {
   if (USE_MOCK) {
-    await espera(350) // simula latência da rede
-    const dados = MOCK[tipo]?.[periodo]
-    if (!dados) throw new Error('Dados indisponíveis para este filtro.')
-    return tipo === 'peso' ? pesoComRegistros(dados, periodo) : dados
+    const modulo = await import('../mocks/evolucaoMock.js');
+
+    const delay =
+      modulo.delay ??
+      ((ms) =>
+        new Promise((resolve) => setTimeout(resolve, ms)));
+
+    await delay(250);
+
+    const data = MOCK[tipo]?.[periodo];
+
+    if (!data) {
+      throw new Error(
+        'Dados demonstrativos indisponíveis para este filtro.'
+      );
+    }
+
+    return data;
   }
 
-  const resposta = await fetch(`${API_URL}/evolucao?tipo=${tipo}&periodo=${periodo}`, {
-    headers: headers(),
-  })
-  if (!resposta.ok) {
-    throw new Error(`Erro ao carregar a evolução (${resposta.status}).`)
+  if (tipo !== 'peso') {
+    throw new Error(
+      tipo === 'calorias'
+        ? 'O histórico de calorias ainda precisa de um endpoint agregado no backend.'
+        : 'O histórico de Health Score ainda precisa de uma regra de cálculo e um endpoint no backend.'
+    );
   }
-  return resposta.json()
+
+  const response = await fetch(
+    `${API_BASE_URL}/v1/pesos`,
+    {
+      headers: headers(),
+    }
+  );
+
+  if (!response.ok) {
+    throw await parseError(
+      response,
+      'Não foi possível carregar o histórico de peso.'
+    );
+  }
+
+  const records = await response.json();
+
+  if (!Array.isArray(records)) {
+    throw new Error(
+      'A API de peso retornou um formato inesperado.'
+    );
+  }
+
+  return buildWeightEvolution(records, Number(periodo));
 }
 
 /**
- * Registra um peso.
- * @param {{ data: string, valor: number }} registro  data no formato yyyy-MM-dd
+ * Registra uma medição de peso.
  */
 export async function registrarPeso({ data, valor }) {
   if (USE_MOCK) {
-    await espera(300)
-    const lista = lerRegistros().filter((r) => r.data !== data) // mesmo dia: substitui
-    lista.push({ data, valor })
-    salvarRegistros(lista)
-    return { data, valor }
+    const key = 'smartcarbo:mock:pesos';
+
+    const records = JSON.parse(
+      localStorage.getItem(key) || '[]'
+    ).filter((record) => record.data !== data);
+
+    records.push({ data, valor });
+
+    localStorage.setItem(key, JSON.stringify(records));
+
+    return { data, valor };
   }
 
-  const resposta = await fetch(`${API_URL}/evolucao/peso`, {
-    method: 'POST',
-    headers: headers({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ data, valor }),
-  })
-  if (!resposta.ok) {
-    throw new Error(`Erro ao registrar o peso (${resposta.status}).`)
+  const response = await fetch(
+    `${API_BASE_URL}/v1/pesos`,
+    {
+      method: 'POST',
+      headers: headers({
+        'Content-Type': 'application/json',
+      }),
+      body: JSON.stringify({
+        data,
+        peso: valor,
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    throw await parseError(
+      response,
+      'Não foi possível registrar o peso.'
+    );
   }
-  return resposta.json().catch(() => ({ data, valor }))
+
+  const body =
+    response.status === 204
+      ? null
+      : await response.json().catch(() => null);
+
+  return body
+    ? {
+        data: body.data,
+        valor: body.peso,
+      }
+    : { data, valor };
 }
