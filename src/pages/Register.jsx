@@ -230,7 +230,15 @@ function Register() {
       const dadosUsuario = {
         nome: name.trim(), email: email.trim(), senha: password,
         dataNascimento: birthDate, sexo: gender, altura: Number(height), peso: Number(weight),
-        nivelAtividade: activityLevel, objetivo: goal,
+        nivelAtividade: activityLevel,
+        // Envia o objetivo em um formato textual padronizado que o backend também aceita.
+        objetivo: ({
+          "perder-peso": "Perder peso",
+          "ganhar-peso": "Ganhar peso",
+          "ganhar-massa-muscular": "Ganhar massa muscular",
+          "melhorar-alimentacao": "Melhorar minha alimentação",
+          "manter-peso": "Manter meu peso e saúde geral",
+        })[goal] || goal,
         restricoes: restrictions.length ? restrictions.join(", ") : "Nenhuma",
         condicaoSaude: healthCondition || "Nenhuma",
         avaliacaoAlimentacao: foodRating === "ruim" ? 1 : foodRating === "regular" ? 2 : foodRating === "boa" ? 3 : 4,
@@ -1202,12 +1210,12 @@ function Register() {
                   <button
                     type="button"
                     className={
-                      goal === "ganhar-massa"
+                      goal === "ganhar-massa-muscular"
                         ? "goal-card selected"
                         : "goal-card"
                     }
                     onClick={() => {
-                      setGoal("ganhar-massa");
+                      setGoal("ganhar-massa-muscular");
                       clearError("goal");
                     }}
                   >

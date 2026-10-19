@@ -112,19 +112,18 @@ function toApiFoodRecord(food, mealTitle, date, refeicaoId) {
     };
 }
 function Icon({ children }) { return <svg viewBox="0 0 24 24" aria-hidden="true">{children}</svg>; }
-function HomeDashboard({ profileName, meals, progress, waterMl, waterLoading, waterError, onAddWater, onUndoWater, setActivePage, calorieGoal, calorieGoalLoading, calorieGoalMessage }) {
+function HomeDashboard({ profileName, profileWeight, meals, progress, waterMl, waterLoading, waterError, onAddWater, onUndoWater, setActivePage, calorieGoal, calorieGoalLoading, calorieGoalMessage }) {
     const today = localISODate();
     const goalAvailable = Number(calorieGoal) > 0;
     const goal = goalAvailable ? Number(calorieGoal) : 0;
-    const weightGoal = Math.max(1, Number(localStorage.getItem(WEIGHT_GOAL_KEY)) || 55);
-    let weight = null;
-    try {
-        const records = JSON.parse(localStorage.getItem(WEIGHT_KEY) || '[]');
-        const latest = [...records].sort((a, b) => String(b.data).localeCompare(String(a.data)))[0];
-        if (latest && Number(latest.valor) > 0)
-            weight = Number(latest.valor);
-    }
-    catch { /* mantém o estado vazio se o histórico estiver inválido */ }
+    const storedWeightGoal = Number(localStorage.getItem(WEIGHT_GOAL_KEY));
+    const weightGoal = Number.isFinite(storedWeightGoal) && storedWeightGoal > 0
+        ? storedWeightGoal
+        : null;
+    // O card de peso atual usa o peso do perfil do usuário autenticado.
+    // O histórico da evolução é separado e pode conter medições anteriores.
+    // Não ler o peso atual do localStorage global do navegador evita misturar contas.
+    const weight = Number(profileWeight) > 0 ? Number(profileWeight) : null;
     const loggedMeals = meals.filter(m => (m.components || []).length > 0);
     const calories = loggedMeals.reduce((sum, m) => sum + (m.components || []).reduce((n, f) => n + (Number(f.calories) || 0), 0), 0);
     const carbsByName = { 'Arroz integral cozido': 23, 'Peito de frango grelhado': 0, 'Banana prata': 23, 'Ovo cozido': 0.6, 'Batata doce cozida': 20, 'Feijão cozido': 14, 'Aveia': 20 };
@@ -152,7 +151,7 @@ function HomeDashboard({ profileName, meals, progress, waterMl, waterLoading, wa
                 ? `${Math.max(0, goal - calories).toLocaleString('pt-BR')} kcal restantes para a estimativa diária`
                 : calorieGoalMessage || 'Complete os dados do perfil para consultar a estimativa.'}</p>
       </article>
-      <article className="home-metric"><div className="home-metric__top"><span className="home-metric__icon">⚖</span><span>Peso atual</span></div><strong>{weight === null ? '—' : `${weight.toLocaleString('pt-BR')} kg`}</strong><p>{weight === null ? 'Registre seu peso na tela Evolução' : `Meta pessoal: ${weightGoal.toLocaleString('pt-BR')} kg`}</p><button className="home-text-action" onClick={() => setActivePage('Evolução')}>Acompanhar evolução →</button></article>
+      <article className="home-metric"><div className="home-metric__top"><span className="home-metric__icon">⚖</span><span>Peso atual</span></div><strong>{weight === null ? '—' : `${weight.toLocaleString('pt-BR')} kg`}</strong><p>{weight === null ? 'Registre seu peso na tela Evolução' : weightGoal === null ? 'Meta de peso ainda não definida' : `Meta pessoal: ${weightGoal.toLocaleString('pt-BR')} kg`}</p><button className="home-text-action" onClick={() => setActivePage('Evolução')}>Acompanhar evolução →</button></article>
       <article className="home-metric"><div className="home-metric__top"><span className="home-metric__icon">⌁</span><span>Carboidratos</span></div><strong>{Math.round(carbs).toLocaleString('pt-BR')} <small>g estimados</small></strong><p>{loggedMeals.length ? 'Estimativa pelos alimentos registrados' : 'Seus dados aparecerão após registrar alimentos'}</p></article>
       <article className="home-metric home-metric--water"><div className="home-metric__top"><span className="home-metric__icon">💧</span><span>Consumo de água</span></div><strong>{(waterMl / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} <small>/ 2 L</small></strong><div className="home-progress home-progress--water"><span style={{ width: `${Math.min(100, waterMl / waterGoal * 100)}%` }}/></div><div className="home-water-actions"><button type="button" onClick={onAddWater} disabled={waterLoading}>{waterLoading ? 'Salvando...' : '+ 250 ml'}</button><button type="button" onClick={onUndoWater} disabled={waterLoading || waterMl <= 0}>{waterLoading ? 'Aguarde...' : '− último registro'}</button></div>{waterError && <p className="meal-form__error" role="alert">{waterError}</p>}</article>
     </div>
@@ -166,6 +165,7 @@ export default function Dashboard() {
     const [calorieGoal, setCalorieGoal] = useState(null);
     const [calorieGoalMessage, setCalorieGoalMessage] = useState('');
     const [calorieGoalLoading, setCalorieGoalLoading] = useState(true);
+    const [calorieGoalRefresh, setCalorieGoalRefresh] = useState(0);
     const [selectedDate, setSelectedDate] = useState(() => { const saved = localStorage.getItem(SELECTED_DATE_KEY); return saved && /^\d{4}-\d{2}-\d{2}$/.test(saved) ? saved : localISODate(); });
     const [meals, setMeals] = useState(() => readJSON(TEMPLATE_KEY, []));
     const [apiFoodRecords, setApiFoodRecords] = useState([]);
@@ -304,7 +304,7 @@ export default function Dashboard() {
 
         carregarMetaCalorica();
         return () => { cancelled = true; };
-    }, []);
+    }, [calorieGoalRefresh]);
 
     useEffect(() => {
         let cancelled = false;
@@ -450,6 +450,7 @@ export default function Dashboard() {
             setProfileEmail(payload.email);
             setProfileSaved(true);
             setProfileEditing(false);
+            setCalorieGoalRefresh((current) => current + 1);
         }
         catch (error) {
             setProfileError(error.message || 'Erro ao salvar o perfil. Verifique a conexão com o backend.');
@@ -775,7 +776,7 @@ export default function Dashboard() {
 
     <main className={`main ${activePage === 'Perfil' ? 'main--profile' : activePage === 'Evolução' ? 'main--evolution' : activePage === 'Início' ? 'main--home' : activePage === 'Comunidade' ? 'main--community' : ''}`} id="refeicoes">
       <header className="topbar"><div className="topbar__spacer"/><div className="search-wrap"><label className="search"><Icon><circle cx="10.8" cy="10.8" r="6.5"/><path d="m16 16 4.5 4.5"/></Icon><input type="search" placeholder={activePage === 'Perfil' ? 'Buscar no perfil...' : activePage === 'Evolução' ? 'Buscar na evolução...' : activePage === 'Início' ? 'Buscar alimentos, refeições...' : 'Buscar refeições...'} aria-label={activePage === 'Perfil' ? 'Buscar informações do perfil' : activePage === 'Evolução' ? 'Buscar na evolução' : 'Buscar refeições'} autoComplete="off" value={search} onChange={e => setSearch(e.target.value)}/></label>{activePage === 'Perfil' && search.trim() && <div className="profile-search-results">{(() => { const q = search.trim().toLocaleLowerCase('pt-BR'); const entries = [{ tab: 'Dados pessoais', title: 'Nome completo', keywords: 'nome completo mariana' }, { tab: 'Dados pessoais', title: 'E-mail', keywords: 'email e-mail endereço eletrônico' }, { tab: 'Dados pessoais', title: 'Sexo', keywords: 'sexo gênero' }, { tab: 'Dados pessoais', title: 'Altura', keywords: 'altura cm' }, { tab: 'Dados pessoais', title: 'Data de nascimento', keywords: 'data nascimento aniversário idade' }, { tab: 'Dados pessoais', title: 'Peso', keywords: 'peso kg' }, { tab: 'Objetivos', title: 'Objetivos alimentares', keywords: 'objetivo objetivos meta metas' }, { tab: 'Preferências', title: 'Preferências alimentares', keywords: 'preferência preferencias alimentar vegetariana vegana lactose glúten' }, { tab: 'Configurações', title: 'Configurações e notificações', keywords: 'configuração configuracoes notificações privacidade' }]; const matches = entries.filter(item => (item.title + ' ' + item.keywords).toLocaleLowerCase('pt-BR').includes(q)); return matches.length ? matches.map(item => <button key={item.title} type="button" className="profile-search-result" onClick={() => { setProfileTab(item.tab); setProfileEditing(false); setSearch(''); }}><span>{item.title}</span><small>{item.tab}</small></button>) : <p className="profile-search-empty">Nenhuma informação do perfil encontrada.</p>; })()}</div>}</div><div className="notification-wrap"><button className={`icon-button notification ${notificationsOpen ? 'notification--open' : ''}`} aria-label="Notificações" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen(v => !v)}><Icon><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></Icon><i /></button>{notificationsOpen && <div className="notification-popover"><div className="notification-popover__head"><strong>Notificações</strong><button type="button" onClick={() => setNotificationsOpen(false)} aria-label="Fechar notificações">×</button></div><div className="notification-item"><span className="notification-item__icon">✓</span><div><strong>Seu espaço está pronto</strong><p>Registre suas refeições para acompanhar sua rotina.</p></div></div><div className="notification-item"><span className="notification-item__icon">✦</span><div><strong>Uma dica para hoje</strong><p>Explore a página Sugestões para encontrar ideias de refeições.</p></div></div></div>}</div><button type="button" className="user-chip" onClick={() => { setActivePage('Perfil'); setNotificationsOpen(false); }} aria-label="Abrir meu perfil"><span className="user-chip__avatar">{(profileName.trim().split(/\s+/).map(x => x[0]).join('').slice(0, 2) || 'SC').toUpperCase()}</span><span className="user-chip__copy"><strong>Olá, {profileName}</strong><small>Plano Gratuito</small></span></button></header>
-      {activePage === 'Início' && <HomeDashboard profileName={profileName} meals={meals} progress={readJSON(progressKey(localISODate()), {})} waterMl={waterMl} waterLoading={waterLoading} waterError={waterError} onAddWater={addWaterRecord} onUndoWater={undoLastWaterRecord} setActivePage={setActivePage} calorieGoal={calorieGoal} calorieGoalLoading={calorieGoalLoading} calorieGoalMessage={calorieGoalMessage}/>}
+      {activePage === 'Início' && <HomeDashboard profileName={profileName} profileWeight={profileWeight} meals={meals} progress={readJSON(progressKey(localISODate()), {})} waterMl={waterMl} waterLoading={waterLoading} waterError={waterError} onAddWater={addWaterRecord} onUndoWater={undoLastWaterRecord} setActivePage={setActivePage} calorieGoal={calorieGoal} calorieGoalLoading={calorieGoalLoading} calorieGoalMessage={calorieGoalMessage}/>}
       {activePage === 'Evolução' && <EvolucaoIntegrada profileName={profileName} searchTerm={search}/>}
       {activePage === 'Comunidade' && <Community profileName={profileName} searchTerm={search}/>}
 

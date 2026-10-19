@@ -292,17 +292,25 @@ function Grafico({ dados, unidade, tipo, periodo, metaCalorias, metaPeso }) {
 
   const meta = tipo === 'peso' ? metaPeso : tipo === 'calorias' ? metaCalorias : 85
 
+  const metaDisponivel = Number.isFinite(Number(meta)) && Number(meta) > 0
+
+  const metaNumerica = metaDisponivel ? Number(meta) : null
+
   const margem = tipo === 'peso' ? 2 : tipo === 'calorias' ? 100 : 5
 
   const passo = tipo === 'peso' ? 1 : tipo === 'calorias' ? 100 : 5
 
-  const baseMin = temDados ? Math.min(...valores) : meta - margem
+  const baseMin = temDados
+    ? Math.min(...valores)
+    : metaDisponivel ? metaNumerica - margem : (tipo === 'peso' ? 60 : 0)
 
-  const baseMax = temDados ? Math.max(...valores) : meta + margem
+  const baseMax = temDados
+    ? Math.max(...valores)
+    : metaDisponivel ? metaNumerica + margem : (tipo === 'peso' ? 80 : 100)
 
-  let min = Math.floor(Math.min(baseMin - margem, meta - margem * 0.25) / passo) * passo
+  let min = Math.floor(Math.min(baseMin - margem, metaDisponivel ? metaNumerica - margem * 0.25 : baseMin) / passo) * passo
 
-  let max = Math.ceil(Math.max(baseMax + margem, meta + margem * 0.25) / passo) * passo
+  let max = Math.ceil(Math.max(baseMax + margem, metaDisponivel ? metaNumerica + margem * 0.25 : baseMax) / passo) * passo
 
   if (max <= min) max = min + passo
 
@@ -334,7 +342,7 @@ function Grafico({ dados, unidade, tipo, periodo, metaCalorias, metaPeso }) {
     ? `${x(primeiroPonto)},150 ${points} ${x(ultimoPonto)},150`
     : ''
 
-  const metaY = y(meta)
+  const metaY = metaDisponivel ? y(metaNumerica) : null
 
   const metaLabel = tipo === 'peso'
 
@@ -402,11 +410,13 @@ function Grafico({ dados, unidade, tipo, periodo, metaCalorias, metaPeso }) {
 
         ))}
 
-        <line x1="30" y1={metaY} x2="970" y2={metaY} stroke="#d49a37" strokeWidth="1.8" strokeDasharray="7 5" />
-
-        <rect x="812" y={Math.max(4, metaY - 16)} width="158" height="14" rx="4" fill="#fff8e9" />
-
-        <text x="964" y={Math.max(14, metaY - 6)} fill="#9a6a16" fontSize="10" textAnchor="end">{metaLabel}</text>
+        {metaDisponivel && (
+          <>
+            <line x1="30" y1={metaY} x2="970" y2={metaY} stroke="#d49a37" strokeWidth="1.8" strokeDasharray="7 5" />
+            <rect x="812" y={Math.max(4, metaY - 16)} width="158" height="14" rx="4" fill="#fff8e9" />
+            <text x="964" y={Math.max(14, metaY - 6)} fill="#9a6a16" fontSize="10" textAnchor="end">{metaLabel}</text>
+          </>
+        )}
 
         {temDados && (
 
@@ -474,7 +484,7 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
   const [metaCalorias, setMetaCalorias] = useState(() => lerMeta(META_CALORIAS_KEY, 1800))
 
-  const [metaPeso, setMetaPeso] = useState(() => lerMeta(META_PESO_KEY, 55))
+  const [metaPeso, setMetaPeso] = useState(() => lerMeta(META_PESO_KEY, null))
 
   const [carregando, setCarregando] = useState(true)
 
@@ -492,7 +502,7 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
   const [metaPesoAberta, setMetaPesoAberta] = useState(false)
 
-  const [metaPesoRascunho, setMetaPesoRascunho] = useState('55')
+  const [metaPesoRascunho, setMetaPesoRascunho] = useState('')
 
   const [modal, setModal] = useState(false)
 
@@ -682,6 +692,8 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
 
 
+  const metaPesoDisponivel = Number(metaPeso) > 0
+
   const resumo = tipo === 'peso'
 
     ? [
@@ -690,7 +702,7 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
         { label: 'Variação', value: dados.length > 1 ? `${atual - Number(dados[0].valor) > 0 ? '+' : ''}${fmt(atual - Number(dados[0].valor))} kg` : '— kg', sub: `nos últimos ${periodo} dias`, icon: '⌁' },
 
-        { label: 'Meta de peso', value: `${fmt(metaPeso)} kg`, sub: !dados.length ? 'registre seu peso' : atual <= metaPeso ? 'meta numérica atingida' : `faltam ${fmt(atual - metaPeso)} kg`, icon: '⚑' },
+        { label: 'Meta de peso', value: metaPesoDisponivel ? `${fmt(metaPeso)} kg` : 'Não definida', sub: !metaPesoDisponivel ? 'defina um peso-alvo' : !dados.length ? 'registre seu peso' : atual <= metaPeso ? 'meta numérica atingida' : `faltam ${fmt(atual - metaPeso)} kg`, icon: '⚑' },
 
       ]
 
@@ -1139,9 +1151,9 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
         <div className="ev-goal-action">
 
-          <span>Defina seu peso-alvo para acompanhar a evolução.</span>
+          <span>{metaPesoDisponivel ? `Seu peso-alvo atual é ${fmt(metaPeso)} kg.` : 'Você ainda não definiu um peso-alvo.'}</span>
 
-          <button type="button" onClick={() => { setMetaPesoRascunho(String(metaPeso)); setMetaPesoAberta(true) }}>⚙ Alterar meta de peso</button>
+          <button type="button" onClick={() => { setMetaPesoRascunho(metaPesoDisponivel ? String(metaPeso) : ''); setMetaPesoAberta(true) }}>⚙ {metaPesoDisponivel ? 'Alterar meta de peso' : 'Definir meta de peso'}</button>
 
         </div>
 
@@ -1305,7 +1317,7 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
                     <strong>{fmt(r.valor)} kg</strong>
 
-                    <small>{r.valor <= metaPeso ? 'Meta numérica atingida' : `${fmt(r.valor - metaPeso)} kg acima da sua meta de ${fmt(metaPeso)} kg`}</small>
+                    <small>{!metaPesoDisponivel ? 'Defina uma meta de peso para comparar' : r.valor <= metaPeso ? 'Meta numérica atingida' : `${fmt(r.valor - metaPeso)} kg acima da sua meta de ${fmt(metaPeso)} kg`}</small>
 
                   </div>
 
