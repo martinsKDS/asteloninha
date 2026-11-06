@@ -1,32 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-
-
 const API_URL = (
 
   import.meta.env.VITE_API_URL || 'http://localhost:8080/api'
 
 ).replace(/\/+$/, '')
 
-
-
 const TOKEN_KEY = 'smartcarbo-token'
 
 const STORAGE_KEY = 'smartcarbo-evolucao-pesos-v1'
-
-const META_CALORIAS_KEY = 'smartcarbo-meta-calorias-v1'
 
 const META_PESO_KEY = 'smartcarbo-meta-peso-v1'
 
 const CALORIAS_LOCAL_KEY = 'smartcarbo-evolucao-calorias-v1'
 
-
-
 const fmt = (n) =>
 
   Number(n || 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 })
-
-
 
 const hojeISO = () => {
 
@@ -38,11 +28,7 @@ const hojeISO = () => {
 
 }
 
-
-
 const diaMes = (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`
-
-
 
 function lerRegistros(chave) {
 
@@ -60,8 +46,6 @@ function lerRegistros(chave) {
 
 }
 
-
-
 function lerMeta(chave, padrao) {
 
   try {
@@ -78,8 +62,6 @@ function lerMeta(chave, padrao) {
 
 }
 
-
-
 function cabecalhos(extra = {}) {
 
   const token = localStorage.getItem(TOKEN_KEY)
@@ -95,8 +77,6 @@ function cabecalhos(extra = {}) {
   }
 
 }
-
-
 
 async function mensagemErro(response, padrao) {
 
@@ -128,7 +108,24 @@ async function mensagemErro(response, padrao) {
 
 }
 
+async function buscarMetaCaloricaAPI() {
+  const response = await fetch(`${API_URL}/v1/usuarios/me/meta-calorica`, {
+    headers: cabecalhos(),
+  })
 
+  if (!response.ok) {
+    throw await mensagemErro(response, 'Não foi possível carregar a meta calórica do perfil.')
+  }
+
+  const body = await response.json()
+  const meta = Number(body.estimativaKcal)
+
+  if (!Number.isFinite(meta) || meta <= 0) {
+    throw new Error('A API não retornou uma estimativa calórica válida para o perfil.')
+  }
+
+  return meta
+}
 
 async function buscarPesosAPI() {
 
@@ -169,8 +166,6 @@ async function buscarPesosAPI() {
     .sort((a, b) => a.data.localeCompare(b.data))
 
 }
-
-
 
 async function salvarPesoAPI({ data, valor }) {
 
@@ -218,7 +213,30 @@ async function salvarPesoAPI({ data, valor }) {
 
 }
 
+async function atualizarPesoAPI(id, { data, valor }) {
+  const response = await fetch(`${API_URL}/v1/pesos/${id}`, {
+    method: 'PUT',
+    headers: cabecalhos({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ data, peso: valor }),
+  })
 
+  if (!response.ok) {
+    throw await mensagemErro(response, 'Não foi possível atualizar o peso.')
+  }
+
+  return response.status === 204 ? null : response.json()
+}
+
+async function excluirPesoAPI(id) {
+  const response = await fetch(`${API_URL}/v1/pesos/${id}`, {
+    method: 'DELETE',
+    headers: cabecalhos(),
+  })
+
+  if (!response.ok) {
+    throw await mensagemErro(response, 'Não foi possível excluir o peso.')
+  }
+}
 
 async function buscarCaloriasAPI(inicio, fim) {
 
@@ -236,8 +254,6 @@ async function buscarCaloriasAPI(inicio, fim) {
 
   }
 
-
-
   const body = await response.json()
 
   if (!Array.isArray(body)) {
@@ -245,8 +261,6 @@ async function buscarCaloriasAPI(inicio, fim) {
     throw new Error('A API de calorias retornou um formato inválido.')
 
   }
-
-
 
   return body
 
@@ -264,8 +278,6 @@ async function buscarCaloriasAPI(inicio, fim) {
 
 }
 
-
-
 function obterInicio(periodo) {
 
   const fim = hojeISO()
@@ -281,8 +293,6 @@ function obterInicio(periodo) {
   return { inicio, fim }
 
 }
-
-
 
 function Grafico({ dados, unidade, tipo, periodo, metaCalorias, metaPeso }) {
 
@@ -301,11 +311,15 @@ function Grafico({ dados, unidade, tipo, periodo, metaCalorias, metaPeso }) {
   const passo = tipo === 'peso' ? 1 : tipo === 'calorias' ? 100 : 5
 
   const baseMin = temDados
+
     ? Math.min(...valores)
+
     : metaDisponivel ? metaNumerica - margem : (tipo === 'peso' ? 60 : 0)
 
   const baseMax = temDados
+
     ? Math.max(...valores)
+
     : metaDisponivel ? metaNumerica + margem : (tipo === 'peso' ? 80 : 100)
 
   let min = Math.floor(Math.min(baseMin - margem, metaDisponivel ? metaNumerica - margem * 0.25 : baseMin) / passo) * passo
@@ -313,8 +327,6 @@ function Grafico({ dados, unidade, tipo, periodo, metaCalorias, metaPeso }) {
   let max = Math.ceil(Math.max(baseMax + margem, metaDisponivel ? metaNumerica + margem * 0.25 : baseMax) / passo) * passo
 
   if (max <= min) max = min + passo
-
-
 
   const hoje = new Date(`${hojeISO()}T12:00:00`)
 
@@ -337,9 +349,13 @@ function Grafico({ dados, unidade, tipo, periodo, metaCalorias, metaPeso }) {
   const points = pontosOrdenados.map((d) => `${x(d)},${y(Number(d.valor))}`).join(' ')
 
   const primeiroPonto = pontosOrdenados[0]
+
   const ultimoPonto = pontosOrdenados[pontosOrdenados.length - 1]
+
   const area = temDados
+
     ? `${x(primeiroPonto)},150 ${points} ${x(ultimoPonto)},150`
+
     : ''
 
   const metaY = metaDisponivel ? y(metaNumerica) : null
@@ -353,8 +369,6 @@ function Grafico({ dados, unidade, tipo, periodo, metaCalorias, metaPeso }) {
       ? `Meta: ${fmt(metaCalorias)} kcal`
 
       : 'Meta: 85 pts'
-
-
 
   const ticks = Array.from({ length: 5 }, (_, i) => {
 
@@ -373,8 +387,6 @@ function Grafico({ dados, unidade, tipo, periodo, metaCalorias, metaPeso }) {
     }
 
   })
-
-
 
   return (
 
@@ -411,11 +423,17 @@ function Grafico({ dados, unidade, tipo, periodo, metaCalorias, metaPeso }) {
         ))}
 
         {metaDisponivel && (
+
           <>
+
             <line x1="30" y1={metaY} x2="970" y2={metaY} stroke="#d49a37" strokeWidth="1.8" strokeDasharray="7 5" />
+
             <rect x="812" y={Math.max(4, metaY - 16)} width="158" height="14" rx="4" fill="#fff8e9" />
+
             <text x="964" y={Math.max(14, metaY - 6)} fill="#9a6a16" fontSize="10" textAnchor="end">{metaLabel}</text>
+
           </>
+
         )}
 
         {temDados && (
@@ -468,8 +486,6 @@ function Grafico({ dados, unidade, tipo, periodo, metaCalorias, metaPeso }) {
 
 }
 
-
-
 export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm = '' }) {
 
   const [tipo, setTipo] = useState('peso')
@@ -482,7 +498,11 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
   const [registrosCaloriasLocais, setRegistrosCaloriasLocais] = useState(() => lerRegistros(CALORIAS_LOCAL_KEY))
 
-  const [metaCalorias, setMetaCalorias] = useState(() => lerMeta(META_CALORIAS_KEY, 1800))
+  const [metaCalorias, setMetaCalorias] = useState(null)
+
+  const [carregandoMetaCalorias, setCarregandoMetaCalorias] = useState(true)
+
+  const [erroMetaCalorias, setErroMetaCalorias] = useState('')
 
   const [metaPeso, setMetaPeso] = useState(() => lerMeta(META_PESO_KEY, null))
 
@@ -495,10 +515,6 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
   const [erroCalorias, setErroCalorias] = useState('')
 
   const [modoLocal, setModoLocal] = useState(false)
-
-  const [metaAberta, setMetaAberta] = useState(false)
-
-  const [metaRascunho, setMetaRascunho] = useState('1800')
 
   const [metaPesoAberta, setMetaPesoAberta] = useState(false)
 
@@ -523,8 +539,6 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
   const [erro, setErro] = useState('')
 
   const [aviso, setAviso] = useState('')
-
-
 
   const carregarPesos = useCallback(async () => {
 
@@ -554,8 +568,6 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
   }, [])
 
-
-
   const carregarCalorias = useCallback(async () => {
 
     const { inicio, fim } = obterInicio(periodo)
@@ -584,15 +596,11 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
   }, [periodo])
 
-
-
   useEffect(() => {
 
     carregarPesos()
 
   }, [carregarPesos])
-
-
 
   useEffect(() => {
 
@@ -600,15 +608,35 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
   }, [carregarCalorias])
 
+  useEffect(() => {
+    let ativo = true
 
+    async function carregarMetaCalorica() {
+      setCarregandoMetaCalorias(true)
+      setErroMetaCalorias('')
+
+      try {
+        const meta = await buscarMetaCaloricaAPI()
+        if (ativo) setMetaCalorias(meta)
+      } catch (e) {
+        if (ativo) {
+          setMetaCalorias(null)
+          setErroMetaCalorias(e.message || 'Não foi possível carregar a meta do perfil.')
+        }
+      } finally {
+        if (ativo) setCarregandoMetaCalorias(false)
+      }
+    }
+
+    carregarMetaCalorica()
+    return () => { ativo = false }
+  }, [])
 
   useEffect(() => {
 
     try { localStorage.setItem(CALORIAS_LOCAL_KEY, JSON.stringify(registrosCaloriasLocais)) } catch { /* armazenamento local indisponível */ }
 
   }, [registrosCaloriasLocais])
-
-
 
   useEffect(() => {
 
@@ -620,8 +648,6 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
   }, [aviso])
 
-
-
   const dentroPeriodo = useCallback((r) => {
 
     if (!r.data) return false
@@ -631,8 +657,6 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
     return r.data >= inicio && r.data <= fim
 
   }, [periodo])
-
-
 
   const dados = useMemo(() => {
 
@@ -668,8 +692,6 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
   }, [tipo, registros, registrosCalorias, registrosCaloriasLocais, dentroPeriodo])
 
-
-
   const pesosVisiveis = useMemo(
 
     () => [...registros].sort((a, b) => b.data.localeCompare(a.data)),
@@ -678,19 +700,20 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
   )
 
-
-
   const atual = dados.length ? Number(dados[dados.length - 1].valor) : 0
 
-  const mediaCalorias = dados.length
+  const diasComConsumo = dados.filter((d) => Number(d.valor) > 0)
 
-    ? Math.round(dados.reduce((s, d) => s + Number(d.valor), 0) / dados.length)
+  const mediaCalorias = diasComConsumo.length
+
+    ? Math.round(
+        diasComConsumo.reduce((s, d) => s + Number(d.valor), 0) /
+          diasComConsumo.length,
+      )
 
     : 0
 
   const unidade = tipo === 'peso' ? ' kg' : tipo === 'calorias' ? ' kcal' : ' pts'
-
-
 
   const metaPesoDisponivel = Number(metaPeso) > 0
 
@@ -710,11 +733,11 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
       ? [
 
-          { label: 'Média diária', value: `${fmt(mediaCalorias)} kcal`, sub: 'média diária no período selecionado', icon: '◉' },
+          { label: 'Média diária', value: `${fmt(mediaCalorias)} kcal`, sub: 'média dos dias com consumo registrado', icon: '◉' },
 
           { label: 'Variação', value: dados.length > 1 ? `${fmt(Number(dados[dados.length - 1].valor) - Number(dados[0].valor))} kcal` : '— kcal', sub: `nos últimos ${periodo} dias`, icon: '⌁' },
 
-          { label: 'Meta diária', value: `${fmt(metaCalorias)} kcal`, sub: mediaCalorias ? mediaCalorias > metaCalorias ? `${fmt(mediaCalorias - metaCalorias)} kcal acima da meta` : `${fmt(metaCalorias - mediaCalorias)} kcal abaixo da meta` : 'sem consumo registrado', icon: '⚑' },
+          { label: 'Meta diária', value: metaCalorias ? `${fmt(metaCalorias)} kcal` : carregandoMetaCalorias ? 'Carregando...' : 'Indisponível', sub: !metaCalorias ? 'meta calculada no perfil' : mediaCalorias ? mediaCalorias > metaCalorias ? `${fmt(mediaCalorias - metaCalorias)} kcal acima da meta` : `${fmt(metaCalorias - mediaCalorias)} kcal abaixo da meta` : 'sem consumo registrado', icon: '⚑' },
 
         ]
 
@@ -727,8 +750,6 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
           { label: 'Objetivo', value: '85 pts', sub: 'referência futura', icon: '⚑' },
 
         ]
-
-
 
   const resultadosBusca = useMemo(() => {
 
@@ -768,8 +789,6 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
   }, [searchTerm, registros, registrosCalorias, registrosCaloriasLocais])
 
-
-
   function salvarMetaPeso(e) {
 
     e.preventDefault()
@@ -797,80 +816,46 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
   }
 
 
+  function iniciarEdicaoPeso(registro) {
+    setEditandoPeso(modoLocal ? registro.data : registro.id)
+    setData(registro.data)
+    setValor(String(registro.valor).replace('.', ','))
+    setErro('')
+    setAviso('')
+    setModal(true)
+  }
 
-  function salvarMeta(e) {
+  async function excluirPesoLocal(registro) {
+    const confirmado = window.confirm(
+      `Deseja realmente excluir a medição de ${fmt(registro.valor)} kg do dia ${diaMes(registro.data)}?`,
+    )
 
-    e.preventDefault()
+    if (!confirmado) return
 
-    const n = Number(String(metaRascunho).replace(',', '.'))
-
-    if (!Number.isFinite(n) || n < 1 || n > 10000) return
-
-    setMetaCalorias(n)
+    setErroAPI('')
+    setAviso('')
 
     try {
+      if (modoLocal) {
+        const novo = registros.filter((r) => r.data !== registro.data)
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(novo))
+        setRegistros(novo)
+        setAviso('Registro removido deste navegador.')
+        return
+      }
 
-      localStorage.setItem(META_CALORIAS_KEY, String(n))
+      if (!registro.id) {
+        throw new Error('Não foi possível identificar o registro no servidor.')
+      }
 
-    } catch {
-
-      // Armazenamento local indisponível.
-
+      await excluirPesoAPI(registro.id)
+      setRegistros((anteriores) => anteriores.filter((r) => r.id !== registro.id))
+      setAviso('Registro excluído com sucesso.')
+      await carregarPesos()
+    } catch (e) {
+      setErroAPI(e.message || 'Não foi possível excluir o registro.')
     }
-
-    setMetaAberta(false)
-
-    setAviso('Meta diária salva neste navegador.')
-
   }
-
-
-
-  function iniciarEdicaoPeso(registro) {
-
-    if (!modoLocal) {
-
-      setErroAPI('A edição de peso no servidor ainda exige um endpoint PUT no backend.')
-
-      return
-
-    }
-
-    setEditandoPeso(registro.data)
-
-    setData(registro.data)
-
-    setValor(String(registro.valor).replace('.', ','))
-
-    setErro('')
-
-    setModal(true)
-
-  }
-
-
-
-  function excluirPesoLocal(dataRegistro) {
-
-    if (!modoLocal) {
-
-      setErroAPI('A API atual não oferece exclusão de peso. Nenhum dado foi removido do servidor.')
-
-      return
-
-    }
-
-    const novo = registros.filter((r) => r.data !== dataRegistro)
-
-    setRegistros(novo)
-
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(novo)) } catch { /* armazenamento local indisponível */ }
-
-    setAviso('Registro removido deste navegador.')
-
-  }
-
-
 
   async function salvarPeso(e) {
 
@@ -878,17 +863,11 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
     if (salvandoPeso) return
 
-
-
     setErro('')
 
     setAviso('')
 
-
-
     const n = Number(String(valor).trim().replace(',', '.'))
-
-
 
     if (!Number.isFinite(n) || n < 20 || n > 400) {
 
@@ -898,8 +877,6 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
     }
 
-
-
     if (!data || data > hojeISO()) {
 
       setErro('Selecione uma data válida, até hoje.')
@@ -908,11 +885,7 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
     }
 
-
-
     setSalvandoPeso(true)
-
-
 
     try {
 
@@ -926,8 +899,6 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
         ].sort((a, b) => a.data.localeCompare(b.data))
 
-
-
         try {
 
           localStorage.setItem(STORAGE_KEY, JSON.stringify(novo))
@@ -938,8 +909,6 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
         }
 
-
-
         setRegistros(novo)
 
         setAviso(editandoPeso
@@ -949,39 +918,50 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
           : 'Peso salvo somente neste navegador. Para salvar na conta, verifique a conexão com o servidor.')
 
       } else {
-
-        if (editandoPeso) {
-
-          throw new Error('A edição de peso no servidor ainda não está implementada. Nenhuma alteração foi enviada.')
-
+        const dadosPeso = {
+          data,
+          valor: Math.round(n * 10) / 10,
         }
 
-
-
-        const resposta = await salvarPesoAPI({ data, valor: Math.round(n * 10) / 10 })
+        const resposta = editandoPeso
+          ? await atualizarPesoAPI(editandoPeso, dadosPeso)
+          : await salvarPesoAPI(dadosPeso)
 
         if (resposta && resposta.data) {
+
           const registroSalvo = {
+
             id: resposta.id,
+
             data: String(resposta.data).slice(0, 10),
+
             valor: Number(resposta.peso),
+
           }
 
           setRegistros((anteriores) => {
+
             const semMesmoDia = anteriores.filter((r) => r.data !== registroSalvo.data)
+
             return [...semMesmoDia, registroSalvo].sort((a, b) => a.data.localeCompare(b.data))
+
           })
+
         }
 
         setAviso('Peso salvo no servidor.')
+
         setModal(false)
+
         // Atualiza o histórico em segundo plano sem bloquear o fechamento do modal.
+
         void carregarPesos().catch((erro) => {
+
           console.error('Erro ao atualizar histórico de peso:', erro)
+
         })
+
       }
-
-
 
       setValor('')
 
@@ -1012,8 +992,6 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
     }
 
   }
-
-
 
   function salvarConsumo(e) {
 
@@ -1059,8 +1037,6 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
   }
 
-
-
   function abrirModalRegistro() {
 
     setValor('')
@@ -1079,8 +1055,6 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
   }
 
-
-
   return (
 
     <section className="evolution-page">
@@ -1096,8 +1070,6 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
         </div>
 
       </div>
-
-
 
       <div className="ev-toolbar">
 
@@ -1145,8 +1117,6 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
       </div>
 
-
-
       {tipo === 'peso' && (
 
         <div className="ev-goal-action">
@@ -1159,21 +1129,24 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
       )}
 
-
-
       {tipo === 'calorias' && (
 
         <div className="ev-goal-action">
 
-          <span>Consumo calculado a partir dos registros alimentares do servidor.</span>
-
-          <button type="button" onClick={() => { setMetaRascunho(String(metaCalorias)); setMetaAberta(true) }}>⚙ Alterar meta diária</button>
+          <span>
+            {carregandoMetaCalorias
+              ? 'Carregando meta calórica calculada no perfil...'
+              : metaCalorias
+                ? `Meta calculada no perfil: ${fmt(metaCalorias)} kcal por dia.`
+                : erroMetaCalorias || 'Meta calórica do perfil indisponível.'}
+          </span>
+          {!metaCalorias && !carregandoMetaCalorias && (
+            <button type="button" onClick={() => window.location.reload()}>Tentar novamente</button>
+          )}
 
         </div>
 
       )}
-
-
 
       {tipo === 'peso' && carregando && <p className="ev-note">Carregando histórico de peso...</p>}
 
@@ -1202,8 +1175,6 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
         </div>
 
       )}
-
-
 
       {searchTerm.trim() && (
 
@@ -1249,8 +1220,6 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
       )}
 
-
-
       <section className="ev-chart-card">
 
         <div className="ev-card-heading">
@@ -1271,8 +1240,6 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
       </section>
 
-
-
       <div className="ev-stats">
 
         {resumo.map((item) => (
@@ -1288,8 +1255,6 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
         ))}
 
       </div>
-
-
 
       {tipo === 'peso' && (
 
@@ -1325,7 +1290,7 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
                     <button type="button" onClick={() => iniciarEdicaoPeso(r)}>Editar</button>
 
-                    <button type="button" className="ev-delete" onClick={() => excluirPesoLocal(r.data)}>Excluir</button>
+                    <button type="button" className="ev-delete" onClick={() => excluirPesoLocal(r)}>Excluir</button>
 
                   </div>
 
@@ -1345,8 +1310,6 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
       )}
 
-
-
       {tipo === 'calorias' && (
 
         <p className="ev-note">
@@ -1359,15 +1322,11 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
 
       )}
 
-
-
       {tipo === 'health-score' && (
 
         <p className="ev-note">Olá, {profileName}. O Health Score ainda não possui cálculo real implementado e, por isso, não exibimos valores fictícios.</p>
 
       )}
-
-
 
       {metaPesoAberta && (
 
@@ -1402,44 +1361,6 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
         </div>
 
       )}
-
-
-
-      {metaAberta && (
-
-        <div className="ev-modal-backdrop ev-dialog-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setMetaAberta(false) }}>
-
-          <form className="ev-dialog ev-goal-dialog" onSubmit={salvarMeta}>
-
-            <div className="ev-dialog-icon">⚙</div>
-
-            <button type="button" className="ev-dialog-close" aria-label="Fechar" onClick={() => setMetaAberta(false)}>×</button>
-
-            <h2>Meta diária de calorias</h2><p>Escolha a meta usada como referência.</p>
-
-            <label>Meta personalizada (kcal)
-
-              <input autoFocus type="number" min="1" max="10000" step="1" value={metaRascunho} onChange={(e) => setMetaRascunho(e.target.value)} required />
-
-            </label>
-
-            <div className="ev-dialog-hint">A meta é salva neste navegador.</div>
-
-            <div className="ev-dialog-actions">
-
-              <button type="button" className="ev-dialog-cancel" onClick={() => setMetaAberta(false)}>Cancelar</button>
-
-              <button type="submit" className="ev-dialog-primary">Salvar meta</button>
-
-            </div>
-
-          </form>
-
-        </div>
-
-      )}
-
-
 
       {modal && (
 
@@ -1534,8 +1455,6 @@ export default function EvolucaoIntegrada({ profileName = 'Usuário', searchTerm
         </div>
 
       )}
-
-
 
       {aviso && <div className="toast" role="status">{aviso}</div>}
 

@@ -7,7 +7,6 @@ const TEMPLATE_KEY = 'smartcarbo-meal-templates-v1';
 const SELECTED_DATE_KEY = 'smartcarbo-selected-meal-date';
 const progressKey = (date) => `smartcarbo-meal-progress-v1-${date}`;
 const WEIGHT_KEY = 'smartcarbo-evolucao-pesos-v1';
-const WEIGHT_GOAL_KEY = 'smartcarbo-meta-peso-v1';
 const fallbackImage = 'https://images.unsplash.com/photo-1505252585461-04db1eb84625?auto=format&fit=crop&w=240&q=85';
 const foodCatalog = [
     { name: 'Arroz integral cozido', portion: '100g (1 porção)', calories: 124, emoji: '🍚' },
@@ -112,31 +111,40 @@ function toApiFoodRecord(food, mealTitle, date, refeicaoId) {
     };
 }
 function Icon({ children }) { return <svg viewBox="0 0 24 24" aria-hidden="true">{children}</svg>; }
-function HomeDashboard({ profileName, profileWeight, meals, progress, waterMl, waterLoading, waterError, onAddWater, onUndoWater, setActivePage, calorieGoal, calorieGoalLoading, calorieGoalMessage }) {
+function HomeDashboard({ profileName, meals, apiFoodRecords, weightRecords, calorieHistory, profileWeight, progress, waterMl, waterLoading, waterError, onAddWater, onUndoWater, setActivePage, calorieGoal, calorieGoalLoading, calorieGoalMessage }) {
     const today = localISODate();
     const goalAvailable = Number(calorieGoal) > 0;
     const goal = goalAvailable ? Number(calorieGoal) : 0;
-    const storedWeightGoal = Number(localStorage.getItem(WEIGHT_GOAL_KEY));
-    const weightGoal = Number.isFinite(storedWeightGoal) && storedWeightGoal > 0
-        ? storedWeightGoal
-        : null;
-    // O card de peso atual usa o peso do perfil do usuário autenticado.
-    // O histórico da evolução é separado e pode conter medições anteriores.
-    // Não ler o peso atual do localStorage global do navegador evita misturar contas.
-    const weight = Number(profileWeight) > 0 ? Number(profileWeight) : null;
-    const loggedMeals = meals.filter(m => (m.components || []).length > 0);
-    const calories = loggedMeals.reduce((sum, m) => sum + (m.components || []).reduce((n, f) => n + (Number(f.calories) || 0), 0), 0);
-    const carbsByName = { 'Arroz integral cozido': 23, 'Peito de frango grelhado': 0, 'Banana prata': 23, 'Ovo cozido': 0.6, 'Batata doce cozida': 20, 'Feijão cozido': 14, 'Aveia': 20 };
-    const carbs = loggedMeals.reduce((sum, m) => sum + (m.components || []).reduce((n, f) => n + (Number(f.carbs) || carbsByName[f.name] || 0), 0), 0);
+    const latestWeight = [...(Array.isArray(weightRecords) ? weightRecords : [])]
+        .filter(record => Number(record.peso) > 0 && record.data)
+        .sort((a, b) => String(b.data).localeCompare(String(a.data)))[0];
+    // O histórico da API é a fonte principal; o peso do perfil serve como fallback
+    // para contas que ainda não registraram medições na tela Evolução.
+    const weight = latestWeight ? Number(latestWeight.peso) : (Number(profileWeight) > 0 ? Number(profileWeight) : null);
+    const todayRecords = (Array.isArray(apiFoodRecords) ? apiFoodRecords : []).filter(record =>
+        String(record.dataHora || '').slice(0, 10) === today
+    );
+    const calories = todayRecords.reduce((sum, record) => sum + (Number(record.calorias) || 0), 0);
+    const carbs = todayRecords.reduce((sum, record) => sum + (Number(record.carboidratos) || 0), 0);
+    const loggedMealIds = new Set(todayRecords.map(record => Number(record.refeicaoId)).filter(Number.isFinite));
+    // No resumo diário, exiba somente refeições explicitamente vinculadas à data de hoje.
+    // Refeições antigas do localStorage podem não ter dataRefeicao; tratá-las como atuais
+    // fazia refeições antigas aparecerem no dashboard, mesmo com o resumo da API zerado.
+    const loggedMeals = meals.filter(meal =>
+        (meal.components || []).length > 0 &&
+        meal.dateRefeicao === today &&
+        (!meal.apiId || loggedMealIds.has(Number(meal.apiId)))
+    );
     const waterGoal = 2000;
     const percent = goalAvailable ? Math.min(100, Math.round(calories / goal * 100)) : 0;
     const dateLabel = new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date());
-    const last7 = Array.from({ length: 7 }, (_, i) => { const d = new Date(); d.setDate(d.getDate() - (6 - i)); const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; const daily = (() => { try {
-        return JSON.parse(localStorage.getItem(`smartcarbo-meal-progress-v1-${key}`) || '{}');
-    }
-    catch {
-        return {};
-    } })(); const total = meals.filter(m => daily[m.id]).reduce((sum, m) => sum + (Number.parseInt(m.calories, 10) || 0), 0); return { label: d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }), total }; });
+    const historyByDate = new Map((Array.isArray(calorieHistory) ? calorieHistory : []).map(item => [String(item.data).slice(0, 10), Number(item.calorias) || 0]));
+    const last7 = Array.from({ length: 7 }, (_, i) => {
+        const d = new Date();
+        d.setDate(d.getDate() - (6 - i));
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        return { label: d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }), total: historyByDate.get(key) || 0 };
+    });
     const maxChart = Math.max(goal, ...last7.map(x => x.total), 1);
     return <section className="home-dashboard">
     <div className="home-welcome"><div><span className="home-eyebrow">SEU RESUMO DIÁRIO</span><h1>Olá, {profileName || 'por aqui'}! <span>👋</span></h1><p>Vamos acompanhar sua alimentação de hoje?</p></div><div className="home-date">▦ <span>{dateLabel.charAt(0).toUpperCase() + dateLabel.slice(1)}</span></div></div>
@@ -151,13 +159,13 @@ function HomeDashboard({ profileName, profileWeight, meals, progress, waterMl, w
                 ? `${Math.max(0, goal - calories).toLocaleString('pt-BR')} kcal restantes para a estimativa diária`
                 : calorieGoalMessage || 'Complete os dados do perfil para consultar a estimativa.'}</p>
       </article>
-      <article className="home-metric"><div className="home-metric__top"><span className="home-metric__icon">⚖</span><span>Peso atual</span></div><strong>{weight === null ? '—' : `${weight.toLocaleString('pt-BR')} kg`}</strong><p>{weight === null ? 'Registre seu peso na tela Evolução' : weightGoal === null ? 'Meta de peso ainda não definida' : `Meta pessoal: ${weightGoal.toLocaleString('pt-BR')} kg`}</p><button className="home-text-action" onClick={() => setActivePage('Evolução')}>Acompanhar evolução →</button></article>
+      <article className="home-metric"><div className="home-metric__top"><span className="home-metric__icon">⚖</span><span>Peso atual</span></div><strong>{weight === null ? '—' : `${weight.toLocaleString('pt-BR')} kg`}</strong><p>{weight === null ? 'Registre seu peso na tela Evolução' : 'Meta pessoal ainda não definida'}</p><button className="home-text-action" onClick={() => setActivePage('Evolução')}>Acompanhar evolução →</button></article>
       <article className="home-metric"><div className="home-metric__top"><span className="home-metric__icon">⌁</span><span>Carboidratos</span></div><strong>{Math.round(carbs).toLocaleString('pt-BR')} <small>g estimados</small></strong><p>{loggedMeals.length ? 'Estimativa pelos alimentos registrados' : 'Seus dados aparecerão após registrar alimentos'}</p></article>
       <article className="home-metric home-metric--water"><div className="home-metric__top"><span className="home-metric__icon">💧</span><span>Consumo de água</span></div><strong>{(waterMl / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} <small>/ 2 L</small></strong><div className="home-progress home-progress--water"><span style={{ width: `${Math.min(100, waterMl / waterGoal * 100)}%` }}/></div><div className="home-water-actions"><button type="button" onClick={onAddWater} disabled={waterLoading}>{waterLoading ? 'Salvando...' : '+ 250 ml'}</button><button type="button" onClick={onUndoWater} disabled={waterLoading || waterMl <= 0}>{waterLoading ? 'Aguarde...' : '− último registro'}</button></div>{waterError && <p className="meal-form__error" role="alert">{waterError}</p>}</article>
     </div>
     <div className="home-section-heading"><div><h2>Suas refeições</h2><p>Apenas refeições em que você já registrou alimentos.</p></div><button className="home-text-action" onClick={() => setActivePage('Refeições')}>Ver refeições →</button></div>
     {loggedMeals.length ? <div className="home-meals">{loggedMeals.slice(0, 4).map(meal => <article className="home-meal" key={meal.id}><div className="home-meal__emoji">🍽️</div><div className="home-meal__copy"><strong>{meal.title}</strong><span>{(meal.components || []).length} alimento(s) registrado(s)</span></div><strong className="home-meal__calories">{(meal.components || []).reduce((n, f) => n + (Number(f.calories) || 0), 0).toLocaleString('pt-BR')} kcal</strong><button aria-label={`Abrir ${meal.title}`} onClick={() => setActivePage('Refeições')}>→</button></article>)}</div> : <div className="home-empty"><span>🥗</span><div><strong>Seu diário começa aqui</strong><p>Você ainda não registrou alimentos nas refeições. Adicione alimentos para ver seu resumo atualizado aqui.</p></div><button className="primary-button" onClick={() => setActivePage('Refeições')}>Registrar refeição</button></div>}
-    <div className="home-bottom-grid"><article className="home-chart-card"><div className="home-section-heading"><div><h2>Seu progresso</h2><p>Calorias das refeições marcadas como concluídas.</p></div><span className="home-chart-badge">Últimos 7 dias</span></div><div className="home-chart">{last7.map(day => <div className="home-chart__column" key={day.label}><span className="home-chart__value">{day.total || ''}</span><div className="home-chart__bar-wrap"><i style={{ height: `${Math.max(day.total ? 4 : 0, day.total / maxChart * 100)}%` }}/></div><small>{day.label}</small></div>)}</div><div className="home-chart-legend"><span /> Consumo registrado {goalAvailable && <><i /> Estimativa diária ({goal.toLocaleString('pt-BR')} kcal)</>}</div></article><article className="home-shortcuts"><h2>Atalhos</h2><div className="home-shortcut-grid"><button onClick={() => setActivePage('Refeições')}><span>＋</span><strong>Registrar refeição</strong><small>Adicione alimentos ao seu diário.</small></button><button onClick={() => setActivePage('Evolução')}><span>↗</span><strong>Ver evolução</strong><small>Acompanhe peso e calorias.</small></button></div></article></div>
+    <div className="home-bottom-grid"><article className="home-chart-card"><div className="home-section-heading"><div><h2>Seu progresso</h2><p>Calorias registradas no servidor nos últimos 7 dias.</p></div><span className="home-chart-badge">Últimos 7 dias</span></div><div className="home-chart">{last7.map(day => <div className="home-chart__column" key={day.label}><span className="home-chart__value">{day.total || ''}</span><div className="home-chart__bar-wrap"><i style={{ height: `${Math.max(day.total ? 4 : 0, day.total / maxChart * 100)}%` }}/></div><small>{day.label}</small></div>)}</div><div className="home-chart-legend"><span /> Consumo registrado {goalAvailable && <><i /> Estimativa diária ({goal.toLocaleString('pt-BR')} kcal)</>}</div></article><article className="home-shortcuts"><h2>Atalhos</h2><div className="home-shortcut-grid"><button onClick={() => setActivePage('Refeições')}><span>＋</span><strong>Registrar refeição</strong><small>Adicione alimentos ao seu diário.</small></button><button onClick={() => setActivePage('Evolução')}><span>↗</span><strong>Ver evolução</strong><small>Acompanhe peso e calorias.</small></button></div></article></div>
   </section>;
 }
 export default function Dashboard() {
@@ -165,10 +173,11 @@ export default function Dashboard() {
     const [calorieGoal, setCalorieGoal] = useState(null);
     const [calorieGoalMessage, setCalorieGoalMessage] = useState('');
     const [calorieGoalLoading, setCalorieGoalLoading] = useState(true);
-    const [calorieGoalRefresh, setCalorieGoalRefresh] = useState(0);
-    const [selectedDate, setSelectedDate] = useState(() => { const saved = localStorage.getItem(SELECTED_DATE_KEY); return saved && /^\d{4}-\d{2}-\d{2}$/.test(saved) ? saved : localISODate(); });
+    const [selectedDate, setSelectedDate] = useState(() => localISODate());
     const [meals, setMeals] = useState(() => readJSON(TEMPLATE_KEY, []));
     const [apiFoodRecords, setApiFoodRecords] = useState([]);
+    const [weightRecords, setWeightRecords] = useState([]);
+    const [calorieHistory, setCalorieHistory] = useState([]);
     const [foodApiError, setFoodApiError] = useState('');
     const [foodApiSaving, setFoodApiSaving] = useState(false);
     const [progress, setProgress] = useState(() => readJSON(progressKey(localStorage.getItem(SELECTED_DATE_KEY) || localISODate()), {}));
@@ -194,6 +203,10 @@ export default function Dashboard() {
         return paginasValidas.includes(paginaSalva) ? paginaSalva : 'Início';
     });
     const [notificationsOpen, setNotificationsOpen] = useState(false);
+    const [notifications, setNotifications] = useState([]);
+    const [unreadCount, setUnreadCount] = useState(0);
+    const [notificationsLoading, setNotificationsLoading] = useState(false);
+    const [notificationsError, setNotificationsError] = useState('');
     const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
     const [waterMl, setWaterMl] = useState(0);
     const [waterRecords, setWaterRecords] = useState([]);
@@ -304,7 +317,7 @@ export default function Dashboard() {
 
         carregarMetaCalorica();
         return () => { cancelled = true; };
-    }, [calorieGoalRefresh]);
+    }, []);
 
     useEffect(() => {
         let cancelled = false;
@@ -384,6 +397,30 @@ export default function Dashboard() {
         loadFoodRecords();
         return () => { cancelled = true; };
     }, []);
+    useEffect(() => {
+        let cancelled = false;
+        async function loadDashboardHistory() {
+            if (!getApiToken()) return;
+            const dateAtOffset = (offset) => {
+                const date = new Date();
+                date.setDate(date.getDate() + offset);
+                return localISODate(date);
+            };
+            try {
+                const [weights, calories] = await Promise.all([
+                    apiRequest('/api/v1/pesos'),
+                    apiRequest(`/api/v1/dashboard/calorias?inicio=${dateAtOffset(-6)}&fim=${dateAtOffset(0)}`),
+                ]);
+                if (cancelled) return;
+                setWeightRecords(Array.isArray(weights) ? weights : []);
+                setCalorieHistory(Array.isArray(calories) ? calories : []);
+            } catch (error) {
+                if (!cancelled) console.warn('Não foi possível carregar o histórico do dashboard:', error);
+            }
+        }
+        loadDashboardHistory();
+        return () => { cancelled = true; };
+    }, [apiFoodRecords]);
     async function handleProfileSubmit(event) {
         event.preventDefault();
         setProfileError('');
@@ -450,7 +487,6 @@ export default function Dashboard() {
             setProfileEmail(payload.email);
             setProfileSaved(true);
             setProfileEditing(false);
-            setCalorieGoalRefresh((current) => current + 1);
         }
         catch (error) {
             setProfileError(error.message || 'Erro ao salvar o perfil. Verifique a conexão com o backend.');
@@ -533,6 +569,11 @@ export default function Dashboard() {
             el.close(); });
     }, [mealDialog, activeMealId, renameTarget, removeTarget]);
     const visibleMeals = useMemo(() => meals.filter(meal => `${meal.title} ${meal.description}`.toLocaleLowerCase('pt-BR').includes(search.trim().toLocaleLowerCase('pt-BR'))), [meals, search]);
+    // A aba Hoje lista somente refeições que pertencem à data selecionada.
+    const mealsForSelectedDate = useMemo(
+        () => visibleMeals.filter(meal => meal.dateRefeicao === selectedDate),
+        [visibleMeals, selectedDate]
+    );
     const activeMeal = meals.find(meal => meal.id === activeMealId);
     const foodResults = foodCatalog.filter(food => `${food.name} ${food.portion}`.toLocaleLowerCase('pt-BR').includes(foodSearch.trim().toLocaleLowerCase('pt-BR')));
     const foodTotal = activeComponents.reduce((sum, food) => sum + (Number(food.calories) || 0), 0);
@@ -718,6 +759,63 @@ export default function Dashboard() {
             setFoodApiError(error.message || 'Não foi possível renomear a refeição.');
         }
     }
+    async function carregarNotificacoes() {
+        setNotificationsLoading(true);
+        setNotificationsError('');
+        try {
+            const [lista, contagem] = await Promise.all([
+                apiRequest('/api/v1/notificacoes'),
+                apiRequest('/api/v1/notificacoes/nao-lidas/contagem')
+            ]);
+            // Normaliza o estado de leitura para booleano, inclusive quando a API
+            // serializa o valor como texto ("true"/"false").
+            const listaNormalizada = (Array.isArray(lista) ? lista : []).map(item => {
+                const valorLida = item.lida ?? item.lido ?? item.read ?? false;
+                const lida = valorLida === true || String(valorLida).toLowerCase() === 'true';
+                return { ...item, lida };
+            });
+            setNotifications(listaNormalizada);
+            const quantidadeApi = Number(contagem?.quantidade);
+            setUnreadCount(Number.isFinite(quantidadeApi)
+                ? quantidadeApi
+                : listaNormalizada.filter(item => !item.lida).length);
+        } catch (error) {
+            setNotificationsError(error.message || 'Não foi possível carregar as notificações.');
+        } finally {
+            setNotificationsLoading(false);
+        }
+    }
+
+    async function marcarNotificacaoComoLida(id) {
+        try {
+            await apiRequest(`/api/v1/notificacoes/${id}/lida`, { method: 'PATCH' });
+            const estavaNaoLida = notifications.some(item => String(item.id) === String(id) && !item.lida);
+            setNotifications(current => current.map(item =>
+                String(item.id) === String(id) ? { ...item, lida: true } : item
+            ));
+            if (estavaNaoLida) {
+                setUnreadCount(current => Math.max(0, current - 1));
+            }
+        } catch (error) {
+            setNotificationsError(error.message || 'Não foi possível marcar a notificação como lida.');
+        }
+    }
+
+    async function marcarTodasNotificacoesComoLidas() {
+        try {
+            await apiRequest('/api/v1/notificacoes/lidas', { method: 'PATCH' });
+            setNotifications(current => current.map(item => ({ ...item, lida: true })));
+            setUnreadCount(0);
+            setNotificationsError('');
+        } catch (error) {
+            setNotificationsError(error.message || 'Não foi possível marcar todas como lidas.');
+        }
+    }
+
+    useEffect(() => {
+        if (getApiToken()) carregarNotificacoes();
+    }, []);
+
     async function confirmRemove() {
         if (!removeTarget) return;
         const mealToRemove = removeTarget;
@@ -775,8 +873,8 @@ export default function Dashboard() {
     </div>}
 
     <main className={`main ${activePage === 'Perfil' ? 'main--profile' : activePage === 'Evolução' ? 'main--evolution' : activePage === 'Início' ? 'main--home' : activePage === 'Comunidade' ? 'main--community' : ''}`} id="refeicoes">
-      <header className="topbar"><div className="topbar__spacer"/><div className="search-wrap"><label className="search"><Icon><circle cx="10.8" cy="10.8" r="6.5"/><path d="m16 16 4.5 4.5"/></Icon><input type="search" placeholder={activePage === 'Perfil' ? 'Buscar no perfil...' : activePage === 'Evolução' ? 'Buscar na evolução...' : activePage === 'Início' ? 'Buscar alimentos, refeições...' : 'Buscar refeições...'} aria-label={activePage === 'Perfil' ? 'Buscar informações do perfil' : activePage === 'Evolução' ? 'Buscar na evolução' : 'Buscar refeições'} autoComplete="off" value={search} onChange={e => setSearch(e.target.value)}/></label>{activePage === 'Perfil' && search.trim() && <div className="profile-search-results">{(() => { const q = search.trim().toLocaleLowerCase('pt-BR'); const entries = [{ tab: 'Dados pessoais', title: 'Nome completo', keywords: 'nome completo mariana' }, { tab: 'Dados pessoais', title: 'E-mail', keywords: 'email e-mail endereço eletrônico' }, { tab: 'Dados pessoais', title: 'Sexo', keywords: 'sexo gênero' }, { tab: 'Dados pessoais', title: 'Altura', keywords: 'altura cm' }, { tab: 'Dados pessoais', title: 'Data de nascimento', keywords: 'data nascimento aniversário idade' }, { tab: 'Dados pessoais', title: 'Peso', keywords: 'peso kg' }, { tab: 'Objetivos', title: 'Objetivos alimentares', keywords: 'objetivo objetivos meta metas' }, { tab: 'Preferências', title: 'Preferências alimentares', keywords: 'preferência preferencias alimentar vegetariana vegana lactose glúten' }, { tab: 'Configurações', title: 'Configurações e notificações', keywords: 'configuração configuracoes notificações privacidade' }]; const matches = entries.filter(item => (item.title + ' ' + item.keywords).toLocaleLowerCase('pt-BR').includes(q)); return matches.length ? matches.map(item => <button key={item.title} type="button" className="profile-search-result" onClick={() => { setProfileTab(item.tab); setProfileEditing(false); setSearch(''); }}><span>{item.title}</span><small>{item.tab}</small></button>) : <p className="profile-search-empty">Nenhuma informação do perfil encontrada.</p>; })()}</div>}</div><div className="notification-wrap"><button className={`icon-button notification ${notificationsOpen ? 'notification--open' : ''}`} aria-label="Notificações" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen(v => !v)}><Icon><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></Icon><i /></button>{notificationsOpen && <div className="notification-popover"><div className="notification-popover__head"><strong>Notificações</strong><button type="button" onClick={() => setNotificationsOpen(false)} aria-label="Fechar notificações">×</button></div><div className="notification-item"><span className="notification-item__icon">✓</span><div><strong>Seu espaço está pronto</strong><p>Registre suas refeições para acompanhar sua rotina.</p></div></div><div className="notification-item"><span className="notification-item__icon">✦</span><div><strong>Uma dica para hoje</strong><p>Explore a página Sugestões para encontrar ideias de refeições.</p></div></div></div>}</div><button type="button" className="user-chip" onClick={() => { setActivePage('Perfil'); setNotificationsOpen(false); }} aria-label="Abrir meu perfil"><span className="user-chip__avatar">{(profileName.trim().split(/\s+/).map(x => x[0]).join('').slice(0, 2) || 'SC').toUpperCase()}</span><span className="user-chip__copy"><strong>Olá, {profileName}</strong><small>Plano Gratuito</small></span></button></header>
-      {activePage === 'Início' && <HomeDashboard profileName={profileName} profileWeight={profileWeight} meals={meals} progress={readJSON(progressKey(localISODate()), {})} waterMl={waterMl} waterLoading={waterLoading} waterError={waterError} onAddWater={addWaterRecord} onUndoWater={undoLastWaterRecord} setActivePage={setActivePage} calorieGoal={calorieGoal} calorieGoalLoading={calorieGoalLoading} calorieGoalMessage={calorieGoalMessage}/>}
+      <header className="topbar"><div className="topbar__spacer"/><div className="search-wrap"><label className="search"><Icon><circle cx="10.8" cy="10.8" r="6.5"/><path d="m16 16 4.5 4.5"/></Icon><input type="search" placeholder={activePage === 'Perfil' ? 'Buscar no perfil...' : activePage === 'Evolução' ? 'Buscar na evolução...' : activePage === 'Início' ? 'Buscar alimentos, refeições...' : 'Buscar refeições...'} aria-label={activePage === 'Perfil' ? 'Buscar informações do perfil' : activePage === 'Evolução' ? 'Buscar na evolução' : 'Buscar refeições'} autoComplete="off" value={search} onChange={e => setSearch(e.target.value)}/></label>{activePage === 'Perfil' && search.trim() && <div className="profile-search-results">{(() => { const q = search.trim().toLocaleLowerCase('pt-BR'); const entries = [{ tab: 'Dados pessoais', title: 'Nome completo', keywords: 'nome completo mariana' }, { tab: 'Dados pessoais', title: 'E-mail', keywords: 'email e-mail endereço eletrônico' }, { tab: 'Dados pessoais', title: 'Sexo', keywords: 'sexo gênero' }, { tab: 'Dados pessoais', title: 'Altura', keywords: 'altura cm' }, { tab: 'Dados pessoais', title: 'Data de nascimento', keywords: 'data nascimento aniversário idade' }, { tab: 'Dados pessoais', title: 'Peso', keywords: 'peso kg' }, { tab: 'Objetivos', title: 'Objetivos alimentares', keywords: 'objetivo objetivos meta metas' }, { tab: 'Preferências', title: 'Preferências alimentares', keywords: 'preferência preferencias alimentar vegetariana vegana lactose glúten' }, { tab: 'Configurações', title: 'Configurações e notificações', keywords: 'configuração configuracoes notificações privacidade' }]; const matches = entries.filter(item => (item.title + ' ' + item.keywords).toLocaleLowerCase('pt-BR').includes(q)); return matches.length ? matches.map(item => <button key={item.title} type="button" className="profile-search-result" onClick={() => { setProfileTab(item.tab); setProfileEditing(false); setSearch(''); }}><span>{item.title}</span><small>{item.tab}</small></button>) : <p className="profile-search-empty">Nenhuma informação do perfil encontrada.</p>; })()}</div>}</div><div className="notification-wrap"><button type="button" className={`icon-button notification ${notificationsOpen ? 'notification--open' : ''}`} aria-label={`Notificações${unreadCount ? `, ${unreadCount} não lidas` : ''}`} aria-expanded={notificationsOpen} onClick={() => { const abrir = !notificationsOpen; setNotificationsOpen(abrir); if (abrir) carregarNotificacoes(); }}><Icon><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></Icon>{unreadCount > 0 && <span className="notification-badge">{unreadCount > 99 ? '99+' : unreadCount}</span>}</button>{notificationsOpen && <div className="notification-popover"><div className="notification-popover__head"><strong>Notificações</strong><div className="notification-popover__actions">{unreadCount > 0 && <button type="button" onClick={marcarTodasNotificacoesComoLidas}>Marcar todas como lidas</button>}<button type="button" onClick={() => setNotificationsOpen(false)} aria-label="Fechar notificações">×</button></div></div>{notificationsError && <p className="notification-error" role="alert">{notificationsError}</p>}{notificationsLoading ? <p className="notification-empty">Carregando notificações...</p> : notifications.length === 0 ? <p className="notification-empty">Você não tem notificações.</p> : notifications.map(item => <div key={item.id} className={`notification-item ${item.lida ? 'notification-item--read' : 'notification-item--unread'}`}><span className="notification-item__icon">{item.tipo === 'NOVO_SEGUIDOR' ? '♧' : item.tipo === 'CURTIDA_PUBLICACAO' ? '♥' : '•'}</span><div className="notification-item__content"><strong>{item.titulo || 'Notificação'}</strong><p>{item.mensagem}</p><small>{item.criadoEm ? new Date(item.criadoEm).toLocaleString('pt-BR') : ''}</small>{!item.lida && <button type="button" className="notification-mark-read" onClick={() => marcarNotificacaoComoLida(item.id)}>Marcar como lida</button>}</div>{!item.lida && <span className="notification-unread-dot" aria-label="Não lida"/>}</div>)}</div>}</div><button type="button" className="user-chip" onClick={() => { setActivePage('Perfil'); setNotificationsOpen(false); }} aria-label="Abrir meu perfil"><span className="user-chip__avatar">{(profileName.trim().split(/\s+/).map(x => x[0]).join('').slice(0, 2) || 'SC').toUpperCase()}</span><span className="user-chip__copy"><strong>Olá, {profileName}</strong><small>Plano Gratuito</small></span></button></header>
+      {activePage === 'Início' && <HomeDashboard profileName={profileName} meals={meals} apiFoodRecords={apiFoodRecords} weightRecords={weightRecords} calorieHistory={calorieHistory} profileWeight={profileWeight} progress={readJSON(progressKey(localISODate()), {})} waterMl={waterMl} waterLoading={waterLoading} waterError={waterError} onAddWater={addWaterRecord} onUndoWater={undoLastWaterRecord} setActivePage={setActivePage} calorieGoal={calorieGoal} calorieGoalLoading={calorieGoalLoading} calorieGoalMessage={calorieGoalMessage}/>}
       {activePage === 'Evolução' && <EvolucaoIntegrada profileName={profileName} searchTerm={search}/>}
       {activePage === 'Comunidade' && <Community profileName={profileName} searchTerm={search}/>}
 
@@ -799,8 +897,8 @@ export default function Dashboard() {
         <div className="suggestion-grid">{suggestions.map((item, i) => <article className="suggestion-card" key={item.title}><div className={`suggestion-card__art suggestion-card__art--${i + 1}`}><span>{['🥣', '🍛', '🍌', '🍠'][i]}</span><small>{item.category}</small></div><div className="suggestion-card__body"><h3>{item.title}</h3><p>{item.description}</p><div className="suggestion-card__foods">{item.foods.map(food => <span key={food.name}>{food.emoji} {food.name}</span>)}</div><strong className="suggestion-card__calories">~{item.foods.reduce((n, f) => n + f.calories, 0)} kcal <small>estimadas</small></strong><button className="primary-button suggestion-add" type="button" onClick={() => addSuggestion(item)}>＋ Adicionar às refeições</button></div></article>)}</div><p className="suggestions-note">Sugestões gerais de alimentação; não substituem orientação individual de nutricionista.</p>
       </section> : activeTab === 'Histórico' ? <section className="history-page">
         <div className="history-summary"><div><span className="section-eyebrow">SEU CAMINHO, DIA APÓS DIA</span><h2>Histórico de refeições</h2><p>Escolha uma data e consulte o que foi marcado como concluído.</p></div><label className="history-date"><span>Consultar data</span><input type="date" value={selectedDate} onChange={e => e.target.value && setSelectedDate(e.target.value)}/></label></div>
-        {(() => { const daily = readJSON(progressKey(selectedDate), {}); const done = meals.filter(m => daily[m.id]); const kcal = done.reduce((n, m) => n + (Number.parseInt(m.calories, 10) || 0), 0); return <><div className="history-stats"><article className="history-stat"><span>Refeições concluídas</span><strong>{done.length}<small> / {meals.length}</small></strong><p>no dia selecionado</p></article><article className="history-stat"><span>Calorias registradas</span><strong>{kcal}<small> kcal</small></strong><p>das refeições concluídas</p></article><article className="history-stat"><span>Data consultada</span><strong className="history-stat__date">{selectedDate.split('-').reverse().join('/')}</strong><p>{formatDate(selectedDate)}</p></article></div><div className="history-list-panel"><div className="section-title-row"><div><h2>Últimos 7 dias</h2><p>Toque em um dia para consultar os registros.</p></div></div><div className="history-days">{Array.from({ length: 7 }, (_, i) => historyDate(i - 6)).map(date => { const dp = readJSON(progressKey(date), {}); const completed = meals.filter(m => dp[m.id]); const total = completed.reduce((n, m) => n + (Number.parseInt(m.calories, 10) || 0), 0); return <button type="button" key={date} className={`history-day ${date === selectedDate ? 'history-day--selected' : ''}`} onClick={() => setSelectedDate(date)}><span>{date.slice(8, 10)}</span><small>{monthNames[Number(date.slice(5, 7)) - 1].slice(0, 3)}</small><i className={`history-day__dot ${completed.length ? 'history-day__dot--filled' : ''}`}/><strong>{total}<small> kcal</small></strong></button>; })}</div><div className="history-records"><h3>Registro de {formatDate(selectedDate)}</h3>{meals.length === 0 ? <p className="meal-list__empty">Você ainda não cadastrou refeições. Vá para Hoje para começar.</p> : meals.map(meal => { const checked = Boolean(daily[meal.id]); return <article className="history-record" key={meal.id}><span className={`history-record__status ${checked ? 'history-record__status--done' : ''}`}>{checked ? '✓' : '○'}</span><div><strong>{meal.title}</strong><p>{meal.description || 'Sem descrição'}</p></div><span className="history-record__kcal">{meal.calories || '0 kcal'}</span><span className={`history-record__label ${checked ? 'history-record__label--done' : ''}`}>{checked ? 'Concluída' : 'Não concluída'}</span></article>; })}</div></div></>; })()}
-      </section> : visibleMeals.length === 0 ? <p className="meal-list__empty">{search ? 'Nenhuma refeição encontrada.' : 'Nenhuma refeição cadastrada. Adicione sua primeira refeição para começar.'}</p> : <section className="meal-list" aria-label="Refeições cadastradas">{visibleMeals.map(meal => <article key={meal.id} className="meal-card" tabIndex="0" role="button" aria-label={`Abrir ${meal.title} e adicionar alimentos`} onClick={() => openDetails(meal)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') {
+        {(() => { const daily = readJSON(progressKey(selectedDate), {}); const mealsOnSelectedDate = meals.filter(m => m.dateRefeicao === selectedDate); const done = mealsOnSelectedDate.filter(m => daily[m.id]); const kcal = done.reduce((n, m) => n + (Number.parseInt(m.calories, 10) || 0), 0); return <><div className="history-stats"><article className="history-stat"><span>Refeições concluídas</span><strong>{done.length}<small> / {mealsOnSelectedDate.length}</small></strong><p>no dia selecionado</p></article><article className="history-stat"><span>Calorias registradas</span><strong>{kcal}<small> kcal</small></strong><p>das refeições concluídas</p></article><article className="history-stat"><span>Data consultada</span><strong className="history-stat__date">{selectedDate.split('-').reverse().join('/')}</strong><p>{formatDate(selectedDate)}</p></article></div><div className="history-list-panel"><div className="section-title-row"><div><h2>Últimos 7 dias</h2><p>Toque em um dia para consultar os registros.</p></div></div><div className="history-days">{Array.from({ length: 7 }, (_, i) => historyDate(i - 6)).map(date => { const dp = readJSON(progressKey(date), {}); const mealsForDate = meals.filter(m => m.dateRefeicao === date); const completed = mealsForDate.filter(m => dp[m.id]); const total = completed.reduce((n, m) => n + (Number.parseInt(m.calories, 10) || 0), 0); return <button type="button" key={date} className={`history-day ${date === selectedDate ? 'history-day--selected' : ''}`} onClick={() => setSelectedDate(date)}><span>{date.slice(8, 10)}</span><small>{monthNames[Number(date.slice(5, 7)) - 1].slice(0, 3)}</small><i className={`history-day__dot ${completed.length ? 'history-day__dot--filled' : ''}`}/><strong>{total}<small> kcal</small></strong></button>; })}</div><div className="history-records"><h3>Registro de {formatDate(selectedDate)}</h3>{mealsOnSelectedDate.length === 0 ? <p className="meal-list__empty">Não há refeições cadastradas para esta data. Escolha outro dia acima ou registre uma refeição na aba Hoje.</p> : mealsOnSelectedDate.map(meal => { const checked = Boolean(daily[meal.id]); return <article className="history-record" key={meal.id}><span className={`history-record__status ${checked ? 'history-record__status--done' : ''}`}>{checked ? '✓' : '○'}</span><div><strong>{meal.title}</strong><p>{meal.description || 'Sem descrição'}</p></div><span className="history-record__kcal">{meal.calories || '0 kcal'}</span><span className={`history-record__label ${checked ? 'history-record__label--done' : ''}`}>{checked ? 'Concluída' : 'Não concluída'}</span></article>; })}</div></div></>; })()}
+      </section> : mealsForSelectedDate.length === 0 ? <p className="meal-list__empty">{search ? 'Nenhuma refeição encontrada nesta data.' : 'Nenhuma refeição cadastrada para esta data. Consulte o Histórico para ver refeições anteriores ou adicione uma refeição.'}</p> : <section className="meal-list" aria-label="Refeições cadastradas">{mealsForSelectedDate.map(meal => <article key={meal.id} className="meal-card" tabIndex="0" role="button" aria-label={`Abrir ${meal.title} e adicionar alimentos`} onClick={() => openDetails(meal)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
             openDetails(meal);
         } }}><img className="meal-card__image" src={meal.image || fallbackImage} alt={meal.title} onError={e => { e.currentTarget.src = fallbackImage; }}/><div className="meal-card__content"><div className="meal-card__title-line"><h2>{meal.title}</h2><time>{meal.time || '--:--'}</time></div><p>{meal.description || 'Sem descrição'}</p><strong className="meal-card__calories">{meal.calories || '0 kcal'}</strong></div><label className="meal-check" onClick={e => e.stopPropagation()} aria-label={`Marcar ${meal.title} como concluída`}><input type="checkbox" checked={Boolean(progress[meal.id])} onChange={e => toggleComplete(meal.id, e.target.checked)}/><span /></label><button className="more-button" type="button" aria-label={`Mais opções para ${meal.title}`} aria-expanded={menuId === meal.id} onClick={e => { e.stopPropagation(); setMenuId(menuId === meal.id ? null : meal.id); }}>···</button>{menuId === meal.id && <div className="meal-actions-menu" role="menu" onClick={e => e.stopPropagation()}><button className="meal-actions-menu__item" role="menuitem" onClick={() => { setRenameTarget(meal); setRenameValue(meal.title); setMenuId(null); }}>Renomear refeição</button><button className="meal-actions-menu__item meal-actions-menu__item--danger" role="menuitem" onClick={() => { setRemoveTarget(meal); setMenuId(null); }}>Retirar refeição</button></div>}</article>)}</section>}
